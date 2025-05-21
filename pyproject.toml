@@ -14,7 +14,8 @@ dependencies = [
     "python-dotenv", # Para cargar .env
     # httpx es una dependencia de pydantic-ai y atlassian-python-api, 
     # pero lo listamos explícitamente si vamos a usarlo directamente.
-    "httpx" 
+    "httpx",
+    "mem0ai"
 ]
 
 [project.optional-dependencies]

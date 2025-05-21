@@ -19,6 +19,12 @@ LOGFIRE_TOKEN = os.getenv("LOGFIRE_TOKEN")
 # PydanticAI Model (opcional, puedes definirlo directamente en el agente)
 PYDANTIC_AI_MODEL = os.getenv("PYDANTIC_AI_MODEL", "openai:gpt-4o-mini") # Default model
 
+# Timezone Configuration
+TIMEZONE = os.getenv("TIMEZONE", "UTC")
+
+# Mem0 Configuration
+MEM0_API_KEY = os.getenv("MEM0_API_KEY")
+
 def validate_config():
     """Valida que las configuraciones esenciales estén presentes."""
     required_jira = [JIRA_URL, JIRA_USERNAME, JIRA_API_TOKEN]
@@ -29,6 +35,19 @@ def validate_config():
     if not all(required_confluence):
         raise ValueError("Faltan variables de entorno para Confluence. Revisa CONFLUENCE_URL, CONFLUENCE_USERNAME, CONFLUENCE_API_TOKEN.")
     print("Configuración de entorno cargada correctamente.")
+
+def get_timezone():
+    """Devuelve un objeto de zona horaria según TIMEZONE, o UTC si no está definida o es inválida."""
+    try:
+        from zoneinfo import ZoneInfo
+        return ZoneInfo(TIMEZONE)
+    except Exception:
+        try:
+            import pytz
+            return pytz.timezone(TIMEZONE)
+        except Exception:
+            from datetime import timezone
+            return timezone.utc
 
 if __name__ == "__main__":
     # Para probar que la carga funciona

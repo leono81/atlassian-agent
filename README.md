@@ -29,6 +29,19 @@ Este proyecto implementa un agente conversacional construido con PydanticAI para
     ```
 3.  Crea un archivo `.env` en la raíz del proyecto, basándote en `.env.example`, y completa tus credenciales y URLs para Jira y Confluence.
 
+## Configuración de Zona Horaria
+
+El agente utiliza la variable de entorno `TIMEZONE` para determinar la zona horaria local al devolver la fecha y hora actual.
+
+- **Formato:** Debe ser una zona horaria IANA válida, por ejemplo: `America/Buenos_Aires`, `Europe/Madrid`, `UTC`.
+- **Ejemplo en `.env`:**
+  ```
+  TIMEZONE=America/Buenos_Aires
+  ```
+- **Fallback:** Si la variable no está definida o es inválida, el agente usará UTC por defecto.
+
+Esto permite que todas las herramientas que dependan de la hora local sean consistentes y fácilmente configurables.
+
 ## Ejecución
 Para iniciar la aplicación Streamlit:
 ```bash

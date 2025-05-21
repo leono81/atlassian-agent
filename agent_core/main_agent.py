@@ -10,7 +10,8 @@ from tools.jira_tools import (
     search_issues as jira_search_issues_tool_func,
     get_issue_details as jira_get_issue_details_tool_func,
     add_comment_to_jira_issue as jira_add_comment_tool_func,
-    # create_jira_issue as jira_create_issue_tool_func # Descomentar cuando esté lista para pruebas
+    add_worklog_to_jira_issue as jira_add_worklog_tool_func,
+    # create_jira_issue as jira_create_issue_tool_func # Descomentar cuando esté lista
 )
 from tools.confluence_tools import (
     search_confluence_pages as conf_search_pages_tool_func,
@@ -18,6 +19,8 @@ from tools.confluence_tools import (
     create_confluence_page as conf_create_page_tool_func,
     update_confluence_page_content as conf_update_page_tool_func,
 )
+from tools.time_tools import get_current_datetime as get_current_datetime_tool_func
+from tools.mem0_tools import save_memory as save_memory_tool_func, search_memory as search_memory_tool_func
 
 # Configuración de Logfire
 logfire.configure(
@@ -34,6 +37,7 @@ logfire.instrument_pydantic()
 jira_search_tool = Tool(jira_search_issues_tool_func)
 jira_details_tool = Tool(jira_get_issue_details_tool_func)
 jira_add_comment_tool = Tool(jira_add_comment_tool_func)
+jira_add_worklog_tool = Tool(jira_add_worklog_tool_func)
 # jira_create_issue_tool = Tool(jira_create_issue_tool_func) # Descomentar cuando esté lista
 
 # Confluence Tools
@@ -42,16 +46,27 @@ confluence_content_tool = Tool(conf_get_page_content_tool_func)
 confluence_create_page_tool = Tool(conf_create_page_tool_func)
 confluence_update_page_tool = Tool(conf_update_page_tool_func)
 
+# Time Tools
+get_current_datetime_tool = Tool(get_current_datetime_tool_func)
+
+# Mem0 Tools
+save_memory_tool = Tool(save_memory_tool_func)
+search_memory_tool = Tool(search_memory_tool_func)
+
 # Lista de todas las herramientas para el agente
 available_tools = [
     jira_search_tool,
     jira_details_tool,
     jira_add_comment_tool,
+    jira_add_worklog_tool,
     # jira_create_issue_tool, # Descomentar cuando esté lista
     confluence_search_tool,
     confluence_content_tool,
     confluence_create_page_tool,
     confluence_update_page_tool,
+    get_current_datetime_tool,
+    save_memory_tool,
+    search_memory_tool,
 ]
 
 # --- Creación del Agente Principal ---
@@ -68,6 +83,7 @@ main_agent = Agent(
         "- Ahora puedes AÑADIR COMENTARIOS a issues de Jira si el usuario lo solicita.\n"
         "- Ahora puedes CREAR NUEVAS PÁGINAS en Confluence si el usuario lo solicita. Necesitarás el contenido (en formato de almacenamiento XHTML), el título y la clave del espacio.\n"
         "- Ahora puedes ACTUALIZAR PÁGINAS existentes en Confluence si el usuario lo solicita. Necesitarás el ID de la página y el nuevo contenido (XHTML) y/o el nuevo título.\n"
+        "- Ahora puedes REGISTRAR TIEMPO (worklogs) en issues de Jira. Necesitarás la clave del issue y el tiempo trabajado (ej. '2h', '30m', o preferiblemente en segundos). La fecha y hora de inicio se asumirá como 'ahora' si no se especifica, o puedes indicar una fecha/hora en formato ISO.\n"
         "Antes de realizar una acción de escritura (crear, actualizar, comentar), confirma con el usuario si es apropiado, a menos que la solicitud sea muy explícita."
     ),
      # Podríamos aumentar los reintentos si las operaciones de escritura son más propensas a fallos transitorios
