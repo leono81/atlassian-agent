@@ -1,0 +1,48 @@
+[project]
+name = "conversational_jira_confluence_agent"
+version = "0.1.0"
+description = "Un agente conversacional para interactuar con Jira y Confluence."
+authors = [
+    {name = "Tu Nombre", email = "tu.email@example.com"},
+]
+requires-python = ">=3.10"
+dependencies = [
+    "pydantic-ai",
+    "streamlit",
+    "atlassian-python-api",
+    "logfire",
+    "python-dotenv", # Para cargar .env
+    # httpx es una dependencia de pydantic-ai y atlassian-python-api, 
+    # pero lo listamos explícitamente si vamos a usarlo directamente.
+    "httpx" 
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "ruff", # Linter y formateaodr
+]
+
+[tool.uv]
+dev-dependencies = [
+    "pytest",
+    "pytest-asyncio",
+    "ruff",
+]
+
+[tool.ruff]
+line-length = 88
+select = ["E", "F", "W", "I", "UP", "PL"] # Standard, Pyflakes, Pycodestyle, Isort, Pyupgrade, Pylint
+ignore = ["E501"] # Ignorar line-too-long, ruff format se encarga
+
+[tool.ruff.format]
+quote-style = "double"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+packages = {find = {where = ["src"]}}
