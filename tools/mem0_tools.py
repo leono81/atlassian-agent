@@ -5,6 +5,9 @@ from pydantic.fields import FieldInfo
 from mem0 import MemoryClient
 import logfire
 
+# User ID fijo para todas las interacciones con Mem0
+USER_ID_FIJO = "atlassian_agent_user_001" # Puedes cambiar este valor si lo deseas
+
 # Configuración: obtener la API key de Mem0 desde el entorno
 MEM0_API_KEY = os.getenv("MEM0_API_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -16,7 +19,7 @@ mem0_client = None
 if MEM0_API_KEY:
     try:
         mem0_client = MemoryClient(api_key=MEM0_API_KEY)
-        logfire.info("Mem0 Client initialized with MEM0_API_KEY.")
+        logfire.info(f"Mem0 Client initialized with MEM0_API_KEY for user {USER_ID_FIJO}.")
     except Exception as e:
         logfire.error(f"Error initializing Mem0 Client with MEM0_API_KEY: {e}", exc_info=True)
         mem0_client = None
@@ -24,13 +27,12 @@ elif OPENAI_API_KEY: # If MEM0_API_KEY is not present, but OPENAI_API_KEY is, tr
     try:
         logfire.info("MEM0_API_KEY not found. Attempting to initialize Mem0 Client (e.g. with OpenAI API key for local/dev)...")
         mem0_client = MemoryClient() # Assuming it can pick up OPENAI_API_KEY from env or has other fallbacks
-        logfire.info("Mem0 Client initialized (fallback). Note: Full functionality may depend on Mem0 service connection.")
+        logfire.info(f"Mem0 Client initialized (fallback) for user {USER_ID_FIJO}. Note: Full functionality may depend on Mem0 service connection.")
     except Exception as e:
         logfire.error(f"Error initializing Mem0 Client with fallback: {e}", exc_info=True)
         mem0_client = None
 
 class SaveMemoryRequest(BaseModel):
-    user_id: str = Field(..., description="Identificador único del usuario.")
     alias: str = Field(..., description="Nombre corto, apodo o alias que el usuario quiere recordar.")
     value: str = Field(..., description="Valor asociado al alias. Puede ser un ID, texto, número, etc.")
     type: Optional[str] = Field(default=None, description="Tipo de memoria (ej: 'jira_alias', 'soporte', 'cliente', etc.).")
@@ -42,7 +44,6 @@ class SaveMemoryResponse(BaseModel):
     status: str = Field(..., description="Estado de la operación.")
 
 class SearchMemoryRequest(BaseModel):
-    user_id: str = Field(..., description="Identificador único del usuario.")
     alias: Optional[str] = Field(default=None, description="Alias o apodo a buscar.")
     type: Optional[str] = Field(default=None, description="Tipo de memoria a buscar.")
     value: Optional[str] = Field(default=None, description="Valor asociado a buscar.")
@@ -62,7 +63,6 @@ class SearchMemoryResponse(BaseModel):
     status: str
 
 async def save_memory(
-    user_id: str = Field(..., description="Identificador único del usuario."),
     alias: str = Field(..., description="Nombre corto, apodo o alias que el usuario quiere recordar."),
     value: str = Field(..., description="Valor asociado al alias. Puede ser un ID, texto, número, etc."),
     type: Optional[str] = Field(default=None, description="Tipo de memoria (ej: 'jira_alias', 'soporte', 'cliente', etc.)."),
@@ -90,11 +90,10 @@ async def save_memory(
     
     content_str = f"{alias} => {value}" if _context_val is None else f"{alias} => {value} ({_context_val})"
     
-    current_user_id = str(user_id)
     try:
         result = mem0_client.add(
             [{"role": "user", "content": content_str}],
-            user_id=current_user_id,
+            user_id=USER_ID_FIJO,
             metadata=metadata
         )
         logfire.debug(f"Mem0 client.add() raw result: {result}")
@@ -115,7 +114,6 @@ async def save_memory(
         return SaveMemoryResponse(memory_id="ERROR", status=f"Error saving memory: {str(e)}")
 
 async def search_memory(
-    user_id: str = Field(..., description="Identificador único del usuario."),
     alias: Optional[str] = Field(default=None, description="Alias o apodo a buscar."),
     type: Optional[str] = Field(default=None, description="Tipo de memoria a buscar."),
     value: Optional[str] = Field(default=None, description="Valor asociado a buscar."),
@@ -143,8 +141,14 @@ async def search_memory(
     if _value_val is not None:
         filters["value"] = _value_val
     
+    # --- Lógica para query obligatorio ---
     search_query_text = _query_val if _query_val is not None else ""
-    current_user_id = str(user_id)
+    if not search_query_text:
+        if _alias_val:
+            search_query_text = str(_alias_val)
+        else:
+            logfire.error("search_memory: No se proporcionó ni query ni alias. La API de Mem0 requiere al menos uno.")
+            return SearchMemoryResponse(results=[], status="Debes proporcionar al menos un alias o un query para buscar en memoria.")
 
     resolved_limit = 3
     if isinstance(_limit_val, int):
@@ -158,7 +162,7 @@ async def search_memory(
             resolved_limit = 3
             
     try:
-        result = mem0_client.search(query=search_query_text, user_id=current_user_id, filters=filters, limit=resolved_limit)
+        result = mem0_client.search(query=search_query_text, user_id=USER_ID_FIJO, filters=filters, limit=resolved_limit)
         logfire.debug(f"Mem0 client.search() raw result: {result}")
         
         parsed_results_list = []
@@ -202,6 +206,7 @@ if __name__ == "__main__":
 
     async def main():
         print(f"--- Mem0 Tools Test Script ---")
+        print(f"Using fixed User ID: {USER_ID_FIJO}")
         print(f"MEM0_API_KEY found: {bool(MEM0_API_KEY)}")
         print(f"OPENAI_API_KEY found: {bool(OPENAI_API_KEY)}")
         print(f"mem0_client initialized: {bool(mem0_client)}")
@@ -210,7 +215,6 @@ if __name__ == "__main__":
             print("\nSkipping tests: mem0_client is not initialized. \nPlease set MEM0_API_KEY or ensure OPENAI_API_KEY is set and allows fallback initialization for Mem0.")
             return
 
-        test_user_id = "test_user_mem0_tools_001"
         test_alias = "my_jira_space_alias"
         test_value = "PSIMDESASW_TEST"
         test_type = "jira_space_config"
@@ -219,7 +223,6 @@ if __name__ == "__main__":
 
         print("\n--- Test 1: Save memory (all fields) ---")
         save_resp_full = await save_memory(
-            user_id=test_user_id, 
             alias=test_alias, 
             value=test_value, 
             type=test_type, 
@@ -232,41 +235,41 @@ if __name__ == "__main__":
         print("\n--- Test 2: Save memory (only required fields) ---")
         alias_req = "minimal_alias_test"
         value_req = "minimal_value_content"
-        save_resp_req = await save_memory(user_id=f"{test_user_id}_req", alias=alias_req, value=value_req)
+        save_resp_req = await save_memory(alias=alias_req, value=value_req)
         print(f"SaveMemoryResponse (required only): {save_resp_req}")
 
         if saved_memory_id and saved_memory_id != "ERROR":
-            print(f"\n--- Searching for saved memory (ID: {saved_memory_id}) using various criteria ---")
+            print(f"\n--- Searching for saved memory (ID: {saved_memory_id}) using various criteria for user {USER_ID_FIJO} ---")
 
             print("\nTest 3.1: Search by alias...")
-            search_alias_resp = await search_memory(user_id=test_user_id, alias=test_alias, limit=1)
+            search_alias_resp = await search_memory(alias=test_alias, limit=1)
             print(f"Search by alias response: {search_alias_resp}")
             if search_alias_resp.results: print(f"Found: {search_alias_resp.results[0]}")
 
             print("\nTest 3.2: Search by type...")
-            search_type_resp = await search_memory(user_id=test_user_id, type=test_type, limit=1)
+            search_type_resp = await search_memory(type=test_type, limit=1)
             print(f"Search by type response: {search_type_resp}")
             if search_type_resp.results: print(f"Found: {search_type_resp.results[0]}")
 
             print("\nTest 3.3: Search by semantic query (matching context)...")
-            search_query_resp = await search_memory(user_id=test_user_id, query="software development testing", limit=1)
+            search_query_resp = await search_memory(query="software development testing", limit=1)
             print(f"Search by query response: {search_query_resp}")
             if search_query_resp.results: print(f"Found: {search_query_resp.results[0]}")
 
             print("\nTest 3.4: Search with query and filter...")
-            search_query_filter_resp = await search_memory(user_id=test_user_id, query=test_value, type=test_type, limit=1)
+            search_query_filter_resp = await search_memory(query=test_value, type=test_type, limit=1)
             print(f"Search by query+filter response: {search_query_filter_resp}")
             if search_query_filter_resp.results: print(f"Found: {search_query_filter_resp.results[0]}")
 
             print("\nTest 3.5: Search for non-existent alias...")
-            search_no_exist_resp = await search_memory(user_id=test_user_id, alias="non_existent_alias_blah")
+            search_no_exist_resp = await search_memory(alias="non_existent_alias_blah")
             print(f"Search non-existent response: {search_no_exist_resp}")
         else:
             print("\nSkipping search tests as initial save_memory failed or did not return a valid ID.")
 
         print("\n--- Test 4: Search for the minimal memory entry by its alias ---")
         if save_resp_req.status == "ok" and save_resp_req.memory_id != "ERROR":
-            search_minimal_resp = await search_memory(user_id=f"{test_user_id}_req", alias=alias_req)
+            search_minimal_resp = await search_memory(alias=alias_req)
             print(f"Search for minimal entry response: {search_minimal_resp}")
             if search_minimal_resp.results: print(f"Found: {search_minimal_resp.results[0]}")
         else:

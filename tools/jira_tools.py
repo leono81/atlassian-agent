@@ -240,17 +240,6 @@ async def add_worklog_to_jira_issue(
             )
             worklog_data = await loop.run_in_executor(None, call_func)
 
-        # Si el usuario provee comentario, agregarlo como comentario general al issue
-        comment_result = None
-        if actual_comment_val and str(actual_comment_val).strip() != "":
-            try:
-                with logfire.span("jira.add_comment_to_issue", issue_key=issue_key):
-                    comment_data_dict = await loop.run_in_executor(None, jira.issue_add_comment, issue_key, actual_comment_val)
-                comment_result = comment_data_dict.get("id", "OK")
-            except Exception as e:
-                logfire.warning("No se pudo agregar comentario al issue tras worklog: {error_message}", error_message=str(e))
-                comment_result = f"Error al agregar comentario: {str(e)}"
-
         author_info = worklog_data.get("author", {})
         comment_from_response = worklog_data.get('comment')
         comment_text_to_store = ""
@@ -259,9 +248,6 @@ async def add_worklog_to_jira_issue(
         elif isinstance(comment_from_response, dict): 
             try: comment_text_to_store = comment_from_response['content'][0]['content'][0]['text']
             except: comment_text_to_store = str(comment_from_response)
-        # Añade info del comentario si se agregó
-        if comment_result:
-            comment_text_to_store = (comment_text_to_store or "") + f" [Comentario añadido al issue: {comment_result}]"
 
         created_worklog = JiraWorklog(
             id=str(worklog_data['id']),

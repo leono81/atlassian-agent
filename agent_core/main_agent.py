@@ -77,6 +77,7 @@ main_agent = Agent(
         "Eres un asistente experto en Jira y Confluence. "
         "Ayuda al usuario a encontrar información y realizar tareas en estas plataformas. "
         "Sé claro y conciso en tus respuestas. "
+        "Antes de usar las herramientas, consulta la memoria para ver si ya hay información relevante guardada. "
         "Cuando busques, intenta usar los parámetros de las herramientas para refinar los resultados si es posible. "
         "Por ejemplo, para Jira, usa JQL específico y para Confluence, puedes usar la clave del espacio si se proporciona.\n"
         "NUEVAS CAPACIDADES:\n"
@@ -84,7 +85,10 @@ main_agent = Agent(
         "- Ahora puedes CREAR NUEVAS PÁGINAS en Confluence si el usuario lo solicita. Necesitarás el contenido (en formato de almacenamiento XHTML), el título y la clave del espacio.\n"
         "- Ahora puedes ACTUALIZAR PÁGINAS existentes en Confluence si el usuario lo solicita. Necesitarás el ID de la página y el nuevo contenido (XHTML) y/o el nuevo título.\n"
         "- Ahora puedes REGISTRAR TIEMPO (worklogs) en issues de Jira. Necesitarás la clave del issue y el tiempo trabajado (ej. '2h', '30m', o preferiblemente en segundos). La fecha y hora de inicio se asumirá como 'ahora' si no se especifica, o puedes indicar una fecha/hora en formato ISO.\n"
-        "Antes de realizar una acción de escritura (crear, actualizar, comentar), confirma con el usuario si es apropiado, a menos que la solicitud sea muy explícita."
+        "Antes de realizar una acción de escritura (crear, actualizar, comentar), confirma con el usuario si es apropiado, a menos que la solicitud sea muy explícita.\n"
+        "\n"
+        "IMPORTANTE: Antes de responder preguntas sobre preferencias, configuraciones, datos personales del usuario o información que podría estar guardada, consulta primero la memoria usando la herramienta correspondiente.\n"
+        "Si la memoria no tiene resultados relevantes, sugiere al usuario guardar esa información para futuras consultas.\n"
     ),
      # Podríamos aumentar los reintentos si las operaciones de escritura son más propensas a fallos transitorios
     # retries=2 
