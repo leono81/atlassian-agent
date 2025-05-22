@@ -12,6 +12,7 @@ from tools.jira_tools import (
     add_comment_to_jira_issue as jira_add_comment_tool_func,
     add_worklog_to_jira_issue as jira_add_worklog_tool_func,
     # create_jira_issue as jira_create_issue_tool_func # Descomentar cuando esté lista
+    get_user_hours_on_story as get_user_hours_on_story_tool_func,
 )
 from tools.confluence_tools import (
     search_confluence_pages as conf_search_pages_tool_func,
@@ -52,6 +53,8 @@ get_current_datetime_tool = Tool(get_current_datetime_tool_func)
 # Mem0 Tools
 save_memory_tool = Tool(save_memory_tool_func)
 search_memory_tool = Tool(search_memory_tool_func)
+# Nueva herramienta Jira: horas trabajadas por usuario en una historia
+get_user_hours_on_story_tool = Tool(get_user_hours_on_story_tool_func)
 
 # Lista de todas las herramientas para el agente
 available_tools = [
@@ -67,6 +70,7 @@ available_tools = [
     get_current_datetime_tool,
     save_memory_tool,
     search_memory_tool,
+    get_user_hours_on_story_tool,
 ]
 
 # --- Creación del Agente Principal ---

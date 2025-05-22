@@ -268,6 +268,41 @@ async def add_worklog_to_jira_issue(
                       issue_key=issue_key, error_message=str(e), exc_info=True)
         return JiraWorklog(id="ERROR", comment=f"Error al añadir worklog: {str(e)}")
 
+async def get_user_worklog_hours_for_issue(
+    issue_key: str,
+    username_or_accountid: str
+) -> float:
+    """
+    Devuelve la cantidad total de horas que un usuario trabajó en una historia (issue).
+    El usuario puede ser identificado por 'name' (Jira Server) o 'accountId' (Jira Cloud).
+    """
+    jira = get_jira_client()
+    loop = asyncio.get_running_loop()
+    worklogs_data = await loop.run_in_executor(None, lambda: jira.issue_get_worklog(issue_key))
+    total_seconds = 0
+    for worklog in worklogs_data.get('worklogs', []):
+        author = worklog.get('author', {})
+        # Compatibilidad con Jira Cloud y Server
+        if (
+            author.get('name') == username_or_accountid or
+            author.get('accountId') == username_or_accountid or
+            author.get('displayName') == username_or_accountid
+        ):
+            total_seconds += worklog.get('timeSpentSeconds', 0)
+    total_hours = total_seconds / 3600
+    return total_hours
+
+from pydantic import Field
+
+async def get_user_hours_on_story(
+    issue_key: str = Field(..., description="Clave de la historia (issue), ej: 'PROJ-123'"),
+    username_or_accountid: str = Field(..., description="Usuario (accountId, name o displayName)")
+) -> float:
+    """
+    Devuelve la cantidad total de horas que un usuario trabajó en una historia (issue).
+    """
+    return await get_user_worklog_hours_for_issue(issue_key, username_or_accountid)
+
 # ... (el bloque if __name__ == "__main__": como antes) ...
 
 
