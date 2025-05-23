@@ -277,4 +277,73 @@ if __name__ == "__main__":
             
         print("\n--- All tests completed ---")
 
-    asyncio.run(main()) 
+    asyncio.run(main())
+
+async def precargar_memoria_completa_usuario(limit: int = 100) -> SearchMemoryResponse:
+    """
+    Función específica para precargar toda la memoria del usuario al iniciar la app.
+    Usa una búsqueda genérica para traer todos los alias guardados.
+    """
+    if not mem0_client:
+        logfire.warn("precargar_memoria_completa_usuario called but mem0_client is not initialized.")
+        return SearchMemoryResponse(results=[], status="Mem0 client not initialized.")
+    
+    try:
+        # Usar una búsqueda genérica que probablemente coincida con muchas memorias
+        # Intentamos con diferentes queries hasta que uno funcione
+        queries_to_try = [
+            "alias",  # Buscar por la palabra "alias" que debería estar en muchas memorias
+            "proyecto",  # Otra palabra común
+            " ",  # Espacio simple
+            "",   # String vacío (si Mem0 lo permite)
+        ]
+        
+        for query_attempt in queries_to_try:
+            try:
+                result = mem0_client.search(
+                    query=query_attempt, 
+                    user_id=USER_ID_FIJO, 
+                    filters={}, 
+                    limit=limit
+                )
+                logfire.debug(f"precargar_memoria_completa_usuario with query '{query_attempt}' - raw result: {result}")
+                
+                parsed_results_list = []
+                actual_mem_list = []
+                if isinstance(result, list):
+                    actual_mem_list = result
+                elif isinstance(result, dict) and "results" in result and isinstance(result["results"], list):
+                    actual_mem_list = result["results"]
+                elif isinstance(result, dict) and "hits" in result and isinstance(result["hits"], list):
+                    actual_mem_list = result["hits"]
+
+                for mem_item in actual_mem_list:
+                    if not isinstance(mem_item, dict): 
+                        continue
+                    meta = mem_item.get("metadata", {})
+                    if not isinstance(meta, dict): 
+                        meta = {}
+                    
+                    parsed_results_list.append(MemoryResult(
+                        memory_id=str(mem_item.get("id", "")),
+                        alias=str(meta.get("alias", "")),
+                        value=str(meta.get("value", "")),
+                        type=str(meta.get("type")) if meta.get("type") is not None else None,
+                        context=str(meta.get("context")) if meta.get("context") is not None else None,
+                        extra={k: v for k, v in meta.items() if k not in {"alias", "value", "type", "context"}}
+                    ))
+                
+                logfire.info(f"precargar_memoria_completa_usuario: Cargados {len(parsed_results_list)} alias para el usuario.")
+                return SearchMemoryResponse(results=parsed_results_list, status="ok")
+                
+            except Exception as query_error:
+                logfire.debug(f"Query '{query_attempt}' failed: {query_error}")
+                continue
+        
+        # Si todos los queries fallaron
+        logfire.warn("precargar_memoria_completa_usuario: Todos los queries genéricos fallaron. Retornando memoria vacía.")
+        return SearchMemoryResponse(results=[], status="No se pudo cargar la memoria - todos los queries fallaron")
+        
+    except Exception as e:
+        logfire.error(f"Error during precargar_memoria_completa_usuario: {e}", exc_info=True)
+        return SearchMemoryResponse(results=[], status=f"Error cargando memoria: {str(e)}") 

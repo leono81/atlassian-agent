@@ -5,7 +5,7 @@ import asyncio
 import re 
 import functools
 from typing import List, Dict, Any, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone, time
 
 from pydantic import BaseModel, Field
 from pydantic.fields import FieldInfo 
@@ -217,18 +217,18 @@ async def add_worklog_to_jira_issue(
         # --- Manejo robusto de fechas ---
         # Si started_datetime_str es una fecha relativa (no ISO ni 'ahora'), usar parse_relative_date
         if not actual_started_datetime_str_val or (isinstance(actual_started_datetime_str_val, str) and actual_started_datetime_str_val.lower() == 'ahora'):
-            _started_dt_object = datetime.datetime.now(datetime.timezone.utc).astimezone()
+            _started_dt_object = datetime.now(timezone.utc).astimezone()
         else:
             try:
-                _started_dt_object = datetime.datetime.fromisoformat(actual_started_datetime_str_val.replace("Z", "+00:00"))
+                _started_dt_object = datetime.fromisoformat(actual_started_datetime_str_val.replace("Z", "+00:00"))
                 if _started_dt_object.tzinfo is None:
-                    _started_dt_object = _started_dt_object.replace(tzinfo=datetime.timezone.utc).astimezone()
+                    _started_dt_object = _started_dt_object.replace(tzinfo=timezone.utc).astimezone()
             except ValueError:
                 # Usar date_utils para fechas relativas
                 parsed_date = parse_relative_date(actual_started_datetime_str_val)
                 if parsed_date:
                     # Por defecto, hora 08:30 si no se especifica
-                    _started_dt_object = datetime.datetime.combine(parsed_date, datetime.time(8, 30)).astimezone()
+                    _started_dt_object = datetime.combine(parsed_date, time(8, 30)).astimezone()
                     if not confirm:
                         # Devuelve un mensaje de confirmación antes de proceder
                         weekday = get_weekday_name(parsed_date)
