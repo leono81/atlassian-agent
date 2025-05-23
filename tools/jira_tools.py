@@ -12,6 +12,7 @@ from pydantic.fields import FieldInfo
 
 from agent_core.jira_instances import get_jira_client
 import logfire
+from tools.date_utils import parse_relative_date, get_weekday_name
 
 class JiraIssue(BaseModel):
     key: str
@@ -182,9 +183,9 @@ async def add_worklog_to_jira_issue(
         default=None, 
         description="Opcional. Fecha y hora de inicio del trabajo. Usa 'ahora' para el momento actual, o un formato ISO 8601 como 'AAAA-MM-DDTHH:MM:SS+ZZZZ' (ej. '2024-07-30T14:30:00+02:00'). Si se omite, se usará la hora actual."
     ),
-    comment: Optional[str] = Field(default=None, description="Un comentario opcional para el worklog.")
+    comment: Optional[str] = Field(default=None, description="Un comentario opcional para el worklog."),
+    confirm: bool = Field(default=False, description="Confirma si se debe proceder con el registro si la fecha fue interpretada.")
 ) -> JiraWorklog:
-    
     # --- CORRECTO MANEJO DE VALORES DE ENTRADA ---
     actual_started_datetime_str_val: Optional[str]
     if isinstance(started_datetime_str, FieldInfo):
@@ -198,15 +199,11 @@ async def add_worklog_to_jira_issue(
     else:
         actual_comment_val = comment
 
-    # time_spent es obligatorio, PydanticAI debería asegurar que no sea FieldInfo aquí.
-    # Si lo fuera, es un bug en el caller (LLM/PydanticAI no pasando el valor)
     if isinstance(time_spent, FieldInfo):
          logfire.error("El parámetro obligatorio 'time_spent' fue recibido como FieldInfo. Esto no debería ocurrir.")
-         # Lanzar error o intentar usar default si FieldInfo lo tuviera (no es el caso para '...')
          raise ValueError("Error interno: 'time_spent' no fue proporcionado correctamente.")
 
-    logfire.info("Intentando añadir worklog al issue: {issue_key} por '{ts_str}'", 
-                 issue_key=issue_key, ts_str=time_spent)
+    logfire.info("Intentando añadir worklog al issue: {issue_key} por '{ts_str}'", issue_key=issue_key, ts_str=time_spent)
     try:
         jira = get_jira_client()
         loop = asyncio.get_running_loop()
@@ -215,21 +212,33 @@ async def add_worklog_to_jira_issue(
         if time_spent_seconds_int <= 0:
             raise ValueError("El tiempo trabajado (time_spent) debe ser mayor que cero segundos para Jira.")
 
-        # Definir started_dt_object ANTES de usarlo en worklog_kwargs
-        _started_dt_object: datetime.datetime # Renombrar para evitar confusión de scope
-        if actual_started_datetime_str_val and actual_started_datetime_str_val.lower() != 'ahora':
+        # --- Manejo robusto de fechas ---
+        # Si started_datetime_str es una fecha relativa (no ISO ni 'ahora'), usar parse_relative_date
+        if not actual_started_datetime_str_val or (isinstance(actual_started_datetime_str_val, str) and actual_started_datetime_str_val.lower() == 'ahora'):
+            _started_dt_object = datetime.datetime.now(datetime.timezone.utc).astimezone()
+        else:
             try:
                 _started_dt_object = datetime.datetime.fromisoformat(actual_started_datetime_str_val.replace("Z", "+00:00"))
-                if _started_dt_object.tzinfo is None: # Si es naive
-                    _started_dt_object = _started_dt_object.replace(tzinfo=datetime.timezone.utc).astimezone() # Asumir UTC y luego a local
+                if _started_dt_object.tzinfo is None:
+                    _started_dt_object = _started_dt_object.replace(tzinfo=datetime.timezone.utc).astimezone()
             except ValueError:
-                raise ValueError(f"Formato de 'started_datetime_str' ('{actual_started_datetime_str_val}') no reconocido. Usa ISO 8601 o 'ahora'.")
-        else: # 'ahora' o None
-            _started_dt_object = datetime.datetime.now(datetime.timezone.utc).astimezone() # Hora actual local del servidor con tz
-        
+                # Usar date_utils para fechas relativas
+                parsed_date = parse_relative_date(actual_started_datetime_str_val)
+                if parsed_date:
+                    # Por defecto, hora 08:30 si no se especifica
+                    _started_dt_object = datetime.datetime.combine(parsed_date, datetime.time(8, 30)).astimezone()
+                    if not confirm:
+                        # Devuelve un mensaje de confirmación antes de proceder
+                        weekday = get_weekday_name(parsed_date)
+                        fecha_str = parsed_date.strftime('%d/%m/%Y')
+                        hora_str = '08:30'
+                        msg = f"¿Quieres registrar el tiempo el {weekday} {fecha_str} a las {hora_str}? Confirma para continuar."
+                        # Devuelve un JiraWorklog especial solo con el mensaje de confirmación
+                        return JiraWorklog(id="CONFIRM_REQUIRED", comment=msg)
+                else:
+                    raise ValueError(f"No se pudo interpretar la fecha '{actual_started_datetime_str_val}'. Usa formato ISO o una fecha relativa reconocida.")
         # Formatear como string para Jira
         started_str = _started_dt_object.strftime("%Y-%m-%dT%H:%M:%S.000%z")
-        
         # Llamada correcta: argumentos posicionales
         with logfire.span("jira.add_worklog_final_call", issue_key=issue_key, started=started_str, time_spent_seconds=time_spent_seconds_int):
             call_func = functools.partial(
@@ -302,8 +311,6 @@ async def get_user_hours_on_story(
     Devuelve la cantidad total de horas que un usuario trabajó en una historia (issue).
     """
     return await get_user_worklog_hours_for_issue(issue_key, username_or_accountid)
-
-# ... (el bloque if __name__ == "__main__": como antes) ...
 
 
 if __name__ == "__main__":
