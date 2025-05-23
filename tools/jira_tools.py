@@ -316,7 +316,7 @@ async def get_user_hours_on_story(
 
 async def get_child_issues_status(
     parent_issue_key: str = Field(..., description="Clave de la historia o iniciativa principal (ej: 'PROJ-123')"),
-    days_soon: int = Field(3, description="Cantidad de días para considerar una tarea como 'próxima a vencer'.")
+    days_soon: int = 3
 ) -> List[dict]:
     """
     Devuelve las subtareas/tareas hijas de una historia/iniciativa, con análisis de vencimiento y responsable.
