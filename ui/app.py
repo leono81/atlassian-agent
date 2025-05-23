@@ -95,16 +95,28 @@ def guardar_nuevo_alias(alias, value):
 # --- Función para generar contexto de memoria ---
 def generar_contexto_memoria():
     """Genera un string con la memoria precargada para pasarla como contexto al agente."""
+    # Verificar si el usuario quiere usar contexto de memoria
+    if not st.session_state.get("usar_contexto_memoria", True):
+        return ""
+    
     memoria = st.session_state.get("memoria_usuario", {})
     if not memoria:
         return ""
     
-    contexto_lines = ["=== MEMORIA DEL USUARIO ==="]
-    contexto_lines.append("Alias y asociaciones que el usuario ha guardado previamente:")
-    for alias, value in memoria.items():
-        contexto_lines.append(f"- '{alias}' → {value}")
-    contexto_lines.append("=== FIN MEMORIA ===")
-    return "\n".join(contexto_lines)
+    # Limitar la cantidad de alias para evitar contexto muy largo
+    max_alias = 10  # Máximo 10 alias en el contexto
+    memoria_items = list(memoria.items())[:max_alias]
+    
+    # Generar contexto más compacto
+    alias_lines = [f"'{alias}' → {value}" for alias, value in memoria_items]
+    
+    # Si hay más alias, indicarlo
+    total_alias = len(memoria)
+    if total_alias > max_alias:
+        alias_lines.append(f"... y {total_alias - max_alias} alias más en memoria")
+    
+    contexto = f"MEMORIA: {', '.join(alias_lines)}"
+    return contexto
 
 # Entrada del usuario
 if prompt := st.chat_input("¿Cómo puedo ayudarte?"):
@@ -157,9 +169,21 @@ if prompt := st.chat_input("¿Cómo puedo ayudarte?"):
             st.session_state.pydantic_ai_messages.extend(new_agent_messages)
 
         except Exception as e:
-            error_message = f"Ocurrió un error: {str(e)}"
-            thinking_message_placeholder.error(error_message)
-            st.session_state.streamlit_display_messages.append({"role": "assistant", "content": error_message})
+            error_type = type(e).__name__
+            error_message = str(e)
+            
+            # Detectar tipos específicos de errores para dar mejor feedback
+            if "500" in error_message or "server_error" in error_message:
+                user_error_msg = f"🚨 Error del servidor de OpenAI (500). Esto puede ser temporal.\n\n**Sugerencias:**\n- Inténtalo de nuevo en unos segundos\n- Si persiste, puede ser un problema con el modelo `{settings.PYDANTIC_AI_MODEL}`\n\n*Error técnico: {error_type}*"
+            elif "model" in error_message.lower() and ("not found" in error_message.lower() or "invalid" in error_message.lower()):
+                user_error_msg = f"❌ Modelo inválido: `{settings.PYDANTIC_AI_MODEL}`\n\n**Modelos válidos de OpenAI:**\n- `openai:gpt-4o-mini` (recomendado)\n- `openai:gpt-4o`\n- `openai:gpt-3.5-turbo`\n\n*Error técnico: {error_type}*"
+            elif "token" in error_message.lower() or "context" in error_message.lower():
+                user_error_msg = f"📏 Contexto muy largo para el modelo.\n\n**Prueba:**\n- Desactivar el contexto de memoria temporalmente\n- Usar un mensaje más corto\n\n*Error técnico: {error_type}*"
+            else:
+                user_error_msg = f"💥 Error inesperado: {error_message}\n\n*Tipo: {error_type}*"
+            
+            thinking_message_placeholder.error(user_error_msg)
+            st.session_state.streamlit_display_messages.append({"role": "assistant", "content": user_error_msg})
             logfire.error("Error en la interacción con el agente desde Streamlit: {error_message}", error_message=str(e), exc_info=True)
         
         # Forzar rerun para actualizar la UI inmediatamente después de la respuesta del agente
@@ -168,22 +192,60 @@ if prompt := st.chat_input("¿Cómo puedo ayudarte?"):
 
 
 st.sidebar.info(
-    "Este es un agente en desarrollo. "
-    f"Modelo: {settings.PYDANTIC_AI_MODEL}. "
+    f"🤖 **Agente Atlassian**\n\n"
+    f"**Modelo:** `{settings.PYDANTIC_AI_MODEL}`\n\n"
+    f"*Versión de desarrollo*"
     # f"Jira: {settings.JIRA_URL}. " # Comentado para evitar error si settings no se carga a tiempo
     # f"Confluence: {settings.CONFLUENCE_URL}."
 )
 
-# Mostrar memoria precargada en el sidebar
+# --- Controles modernos de memoria en el sidebar ---
+st.sidebar.markdown("---")
+
+# Estado de memoria (inicializar si no existe)
+if "usar_contexto_memoria" not in st.session_state:
+    st.session_state.usar_contexto_memoria = True
+
 memoria_usuario = st.session_state.get("memoria_usuario", {})
-if memoria_usuario:
-    st.sidebar.markdown("### 🧠 Memoria Precargada")
-    st.sidebar.markdown("**Alias disponibles:**")
-    for alias, value in memoria_usuario.items():
-        st.sidebar.markdown(f"• `{alias}` → `{value}`")
+cantidad_alias = len(memoria_usuario)
+
+# Toggle para activar/desactivar contexto de memoria
+contexto_activo = st.sidebar.toggle(
+    "🧠 Usar contexto de memoria", 
+    value=st.session_state.usar_contexto_memoria,
+    help="Cuando está activo, el agente conoce automáticamente tus alias sin buscar en memoria."
+)
+st.session_state.usar_contexto_memoria = contexto_activo
+
+# Indicador visual del estado
+if contexto_activo and cantidad_alias > 0:
+    st.sidebar.success(f"✅ Contexto activo ({cantidad_alias} alias cargados)")
+elif contexto_activo and cantidad_alias == 0:
+    st.sidebar.warning("⚠️ Contexto activo pero sin alias")
 else:
-    st.sidebar.markdown("### 🧠 Memoria Precargada")
-    st.sidebar.markdown("*No hay alias cargados*")
+    st.sidebar.info("ℹ️ Contexto desactivado - el agente usará search_memory")
+
+# Popover para ver la memoria
+with st.sidebar.popover(f"👁️ Ver memoria ({cantidad_alias} alias)", use_container_width=True):
+    if memoria_usuario:
+        st.markdown("**🎯 Alias disponibles:**")
+        for alias, value in memoria_usuario.items():
+            st.markdown(f"• **{alias}** → `{value}`")
+        
+        st.markdown("---")
+        st.caption(f"Total: {cantidad_alias} alias precargados")
+        
+        # Botón para refrescar memoria
+        if st.button("🔄 Recargar memoria", use_container_width=True):
+            # Limpiar memoria actual y recargar
+            if "memoria_usuario" in st.session_state:
+                del st.session_state["memoria_usuario"]
+            st.rerun()
+    else:
+        st.warning("No hay alias cargados")
+        st.markdown("Los alias se crean cuando:")
+        st.markdown("- El agente guarda información por ti")
+        st.markdown("- Usas la herramienta `save_memory`")
 
 if st.sidebar.button("Limpiar historial de chat"):
     st.session_state.pydantic_ai_messages = []
