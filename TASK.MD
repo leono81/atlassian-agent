@@ -33,7 +33,7 @@
     -   [X] Sub-Tarea 3.1.1: Tests unitarios.
 -   [X] **Tarea 3.2**: Añadir herramientas de escritura a `confluence_tools.py` (ej. `create_page`).
     -   [X] Sub-Tarea 3.2.1: Tests unitarios.
--   [ ] **Tarea 3.3**: Refinar el prompt del sistema del agente para mejorar el razonamiento y la selección de herramientas.
+-   [X] **Tarea 3.3**: Refinar el prompt del sistema del agente para mejorar el razonamiento y la selección de herramientas.
 
 ## Hito 4: Preparación A2A y Refinamientos
 

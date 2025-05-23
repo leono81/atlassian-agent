@@ -2,10 +2,10 @@
 # ... (importaciones y clases Pydantic como antes, y _parse_time_spent_to_seconds) ...
 # ... (search_issues, get_issue_details, add_comment_to_jira_issue como antes) ...
 import asyncio
-import datetime
 import re 
 import functools
 from typing import List, Dict, Any, Optional
+from datetime import datetime, timedelta
 
 from pydantic import BaseModel, Field
 from pydantic.fields import FieldInfo 
@@ -20,6 +20,7 @@ class JiraIssue(BaseModel):
     status: Optional[str] = None
     assignee: Optional[str] = None
     reporter: Optional[str] = None
+    duedate: Optional[str] = None  # Fecha de vencimiento (YYYY-MM-DD)
 
 class JiraIssueDetails(JiraIssue):
     description: Optional[str] = None
@@ -71,6 +72,7 @@ async def search_issues(
                         status=fields.get("status", {}).get("name"),
                         assignee=assignee_info.get("displayName") if assignee_info else None,
                         reporter=reporter_info.get("displayName") if reporter_info else None,
+                        duedate=fields.get("duedate")  # Nueva línea para poblar la fecha de vencimiento
                     )
                 )
         logfire.info("search_issues encontró {count} issues.", count=len(issues_found))
@@ -312,9 +314,45 @@ async def get_user_hours_on_story(
     """
     return await get_user_worklog_hours_for_issue(issue_key, username_or_accountid)
 
+async def get_child_issues_status(
+    parent_issue_key: str = Field(..., description="Clave de la historia o iniciativa principal (ej: 'PROJ-123')"),
+    days_soon: int = Field(3, description="Cantidad de días para considerar una tarea como 'próxima a vencer'.")
+) -> List[dict]:
+    """
+    Devuelve las subtareas/tareas hijas de una historia/iniciativa, con análisis de vencimiento y responsable.
+    """
+    # Buscar subtareas (issues cuyo parent es la historia)
+    jql_subtasks = f'parent = "{parent_issue_key}" ORDER BY priority DESC'
+    subtasks = await search_issues(jql_subtasks, max_results=50)
+    results = []
+    now = datetime.now().date()
+    soon_threshold = now + timedelta(days=days_soon)
+
+    for issue in subtasks:
+        duedate = None
+        status_due = "Sin vencimiento"
+        if issue.duedate:
+            try:
+                duedate = datetime.strptime(issue.duedate, "%Y-%m-%d").date()
+                if duedate < now:
+                    status_due = "Vencida"
+                elif duedate <= soon_threshold:
+                    status_due = "Próxima a vencer"
+                else:
+                    status_due = "En tiempo"
+            except Exception:
+                status_due = "Fecha inválida"
+        results.append({
+            "key": issue.key,
+            "summary": issue.summary,
+            "assignee": issue.assignee,
+            "status": issue.status,
+            "duedate": issue.duedate,
+            "vencimiento": status_due
+        })
+    return results
 
 if __name__ == "__main__":
-    # ... (bloque de prueba como antes) ...
     from config import settings
     import asyncio
     logfire.configure(token=settings.LOGFIRE_TOKEN, send_to_logfire="if-token-present", service_name="jira_tools_worklog_test_v3")
@@ -326,7 +364,6 @@ if __name__ == "__main__":
             return
 
         print(f"\nProbando add_worklog_to_jira_issue en {existing_issue_key}...")
-        # ... (casos de prueba como antes) ...
         test_cases = [
             {"time_spent": "30m", "started_datetime_str": "ahora", "comment": "30 min, ahora (v3 test)"},
             {"time_spent": "7200", "started_datetime_str": None, "comment": "2 horas (segundos), inicio default (v3 test)"},

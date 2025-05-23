@@ -13,6 +13,7 @@ from tools.jira_tools import (
     add_worklog_to_jira_issue as jira_add_worklog_tool_func,
     # create_jira_issue as jira_create_issue_tool_func # Descomentar cuando esté lista
     get_user_hours_on_story as get_user_hours_on_story_tool_func,
+    get_child_issues_status as get_child_issues_status_tool_func,
 )
 from tools.confluence_tools import (
     search_confluence_pages as conf_search_pages_tool_func,
@@ -40,6 +41,7 @@ jira_details_tool = Tool(jira_get_issue_details_tool_func)
 jira_add_comment_tool = Tool(jira_add_comment_tool_func)
 jira_add_worklog_tool = Tool(jira_add_worklog_tool_func)
 # jira_create_issue_tool = Tool(jira_create_issue_tool_func) # Descomentar cuando esté lista
+get_child_issues_status_tool = Tool(get_child_issues_status_tool_func)
 
 # Confluence Tools
 confluence_search_tool = Tool(conf_search_pages_tool_func)
@@ -63,6 +65,7 @@ available_tools = [
     jira_add_comment_tool,
     jira_add_worklog_tool,
     # jira_create_issue_tool, # Descomentar cuando esté lista
+    get_child_issues_status_tool,
     confluence_search_tool,
     confluence_content_tool,
     confluence_create_page_tool,
