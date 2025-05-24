@@ -46,6 +46,30 @@ class JiraWorklog(BaseModel):
     started: Optional[str] = None
     comment: Optional[str] = None
 
+# === NUEVAS CLASES PARA SPRINT ===
+class JiraSprint(BaseModel):
+    id: str
+    name: str
+    state: str  # "active", "future", "closed"
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    goal: Optional[str] = None
+
+class SprintIssues(BaseModel):
+    sprint: JiraSprint
+    issues: List[JiraIssue]
+    total_issues: int
+    completed_issues: int
+    in_progress_issues: int
+
+class SprintProgress(BaseModel):
+    sprint: JiraSprint
+    total_story_points: Optional[int] = None
+    completed_story_points: Optional[int] = None
+    total_issues: int
+    completed_issues: int
+    progress_percentage: float
+    days_remaining: Optional[int] = None
 
 async def search_issues(
     jql_query: str = Field(..., description="La consulta JQL para buscar issues. Ejemplo: 'project = \"PROJ\" AND status = Open ORDER BY priority DESC'"),
@@ -351,6 +375,434 @@ async def get_child_issues_status(
             "vencimiento": status_due
         })
     return results
+
+# === FUNCIONES PRINCIPALES DE SPRINT ===
+
+async def get_active_sprint_issues(
+    project_key: Optional[str] = Field(default=None, description="Clave del proyecto para filtrar (ej: 'PSIMDESASW'). Si no se especifica, busca en todos los proyectos."),
+    max_results: int = 20
+) -> SprintIssues:
+    """
+    Obtiene todos los issues del sprint activo con información completa del sprint.
+    """
+    actual_max_results = min(max(1, max_results), 100)
+    
+    # Construir JQL para sprint activo
+    if project_key:
+        jql_query = f'project = "{project_key}" AND sprint in openSprints() ORDER BY priority DESC, status ASC'
+    else:
+        jql_query = 'sprint in openSprints() ORDER BY priority DESC, status ASC'
+    
+    logfire.info("Ejecutando get_active_sprint_issues con JQL: {jql_query}", jql_query=jql_query)
+    
+    try:
+        jira = get_jira_client()
+        loop = asyncio.get_running_loop()
+        
+        # Usar expand para obtener información del sprint
+        with logfire.span("jira.sprint_search", jql=jql_query, limit=actual_max_results):
+            issues_raw = await loop.run_in_executor(None, lambda: jira.jql(
+                jql_query, 
+                limit=actual_max_results,
+                expand="changelog"
+            ))
+        
+        if not issues_raw or not issues_raw.get("issues"):
+            # Sprint activo sin issues o no encontrado
+            default_sprint = JiraSprint(
+                id="none", 
+                name="No hay sprint activo", 
+                state="none"
+            )
+            return SprintIssues(
+                sprint=default_sprint,
+                issues=[],
+                total_issues=0,
+                completed_issues=0,
+                in_progress_issues=0
+            )
+        
+        # Procesar issues
+        issues_found: List[JiraIssue] = []
+        issues_raw_data = issues_raw["issues"]
+        sprint_info = None
+        
+        for issue_data in issues_raw_data:
+            fields = issue_data.get("fields", {})
+            assignee_info = fields.get("assignee")
+            reporter_info = fields.get("reporter")
+            
+            # Extraer información del sprint del primer issue (todos deberían tener el mismo sprint activo)
+            if not sprint_info:
+                sprint_info = _get_sprint_data_from_issue(issue_data)
+            
+            issues_found.append(
+                JiraIssue(
+                    key=issue_data.get("key"),
+                    summary=fields.get("summary"),
+                    status=fields.get("status", {}).get("name"),
+                    assignee=assignee_info.get("displayName") if assignee_info else None,
+                    reporter=reporter_info.get("displayName") if reporter_info else None,
+                    duedate=fields.get("duedate")
+                )
+            )
+        
+        # Si no pudimos extraer sprint, crear uno por defecto
+        if not sprint_info:
+            sprint_info = JiraSprint(
+                id="unknown", 
+                name="Sprint Activo", 
+                state="active"
+            )
+        
+        # Calcular métricas
+        progress_data = _calculate_sprint_progress(issues_found, issues_raw_data)
+        
+        result = SprintIssues(
+            sprint=sprint_info,
+            issues=issues_found,
+            total_issues=progress_data["total_issues"],
+            completed_issues=progress_data["completed_issues"],
+            in_progress_issues=progress_data["in_progress_issues"]
+        )
+        
+        logfire.info("get_active_sprint_issues encontró {count} issues en sprint {sprint_name}", 
+                     count=len(issues_found), sprint_name=sprint_info.name)
+        return result
+        
+    except Exception as e:
+        logfire.error("Error en get_active_sprint_issues: {error_message}", error_message=str(e), exc_info=True)
+        error_sprint = JiraSprint(id="error", name="Error al obtener sprint", state="error")
+        return SprintIssues(
+            sprint=error_sprint,
+            issues=[JiraIssue(key="ERROR", summary=f"Error al buscar issues del sprint: {str(e)}")],
+            total_issues=0,
+            completed_issues=0,
+            in_progress_issues=0
+        )
+
+async def get_my_current_sprint_work(
+    project_key: Optional[str] = Field(default=None, description="Clave del proyecto para filtrar (ej: 'PSIMDESASW')."),
+    assignee: Optional[str] = Field(default=None, description="Usuario asignado. Si no se especifica, usa 'currentUser()'.")
+) -> SprintIssues:
+    """
+    Obtiene los issues del sprint activo asignados al usuario especificado o actual.
+    """
+    # Construir JQL para trabajo del usuario en sprint activo
+    assignee_clause = f'assignee = "{assignee}"' if assignee else 'assignee = currentUser()'
+    
+    if project_key:
+        jql_query = f'project = "{project_key}" AND sprint in openSprints() AND {assignee_clause} ORDER BY status ASC, priority DESC'
+    else:
+        jql_query = f'sprint in openSprints() AND {assignee_clause} ORDER BY status ASC, priority DESC'
+    
+    logfire.info("Ejecutando get_my_current_sprint_work con JQL: {jql_query}", jql_query=jql_query)
+    
+    try:
+        jira = get_jira_client()
+        loop = asyncio.get_running_loop()
+        
+        with logfire.span("jira.my_sprint_work", jql=jql_query):
+            issues_raw = await loop.run_in_executor(None, lambda: jira.jql(
+                jql_query, 
+                limit=50,
+                expand="changelog"
+            ))
+        
+        if not issues_raw or not issues_raw.get("issues"):
+            # Usuario sin trabajo en sprint activo
+            default_sprint = JiraSprint(
+                id="none", 
+                name="Sin trabajo asignado en sprint activo", 
+                state="none"
+            )
+            return SprintIssues(
+                sprint=default_sprint,
+                issues=[],
+                total_issues=0,
+                completed_issues=0,
+                in_progress_issues=0
+            )
+        
+        # Procesar issues del usuario
+        issues_found: List[JiraIssue] = []
+        issues_raw_data = issues_raw["issues"]
+        sprint_info = None
+        
+        for issue_data in issues_raw_data:
+            fields = issue_data.get("fields", {})
+            assignee_info = fields.get("assignee")
+            reporter_info = fields.get("reporter")
+            
+            # Extraer información del sprint
+            if not sprint_info:
+                sprint_info = _get_sprint_data_from_issue(issue_data)
+            
+            issues_found.append(
+                JiraIssue(
+                    key=issue_data.get("key"),
+                    summary=fields.get("summary"),
+                    status=fields.get("status", {}).get("name"),
+                    assignee=assignee_info.get("displayName") if assignee_info else None,
+                    reporter=reporter_info.get("displayName") if reporter_info else None,
+                    duedate=fields.get("duedate")
+                )
+            )
+        
+        # Sprint por defecto si no se pudo extraer
+        if not sprint_info:
+            user_name = assignee if assignee else "Usuario actual"
+            sprint_info = JiraSprint(
+                id="unknown", 
+                name=f"Trabajo de {user_name}", 
+                state="active"
+            )
+        
+        # Calcular métricas
+        progress_data = _calculate_sprint_progress(issues_found, issues_raw_data)
+        
+        result = SprintIssues(
+            sprint=sprint_info,
+            issues=issues_found,
+            total_issues=progress_data["total_issues"],
+            completed_issues=progress_data["completed_issues"],
+            in_progress_issues=progress_data["in_progress_issues"]
+        )
+        
+        logfire.info("get_my_current_sprint_work encontró {count} issues para el usuario en sprint {sprint_name}", 
+                     count=len(issues_found), sprint_name=sprint_info.name)
+        return result
+        
+    except Exception as e:
+        logfire.error("Error en get_my_current_sprint_work: {error_message}", error_message=str(e), exc_info=True)
+        error_sprint = JiraSprint(id="error", name="Error al obtener trabajo del sprint", state="error")
+        return SprintIssues(
+            sprint=error_sprint,
+            issues=[JiraIssue(key="ERROR", summary=f"Error al buscar trabajo del sprint: {str(e)}")],
+            total_issues=0,
+            completed_issues=0,
+            in_progress_issues=0
+        )
+
+async def get_sprint_progress(
+    project_key: Optional[str] = Field(default=None, description="Clave del proyecto para filtrar (ej: 'PSIMDESASW')."),
+    sprint_name: Optional[str] = Field(default=None, description="Nombre específico del sprint. Si no se especifica, usa el sprint activo.")
+) -> SprintProgress:
+    """
+    Obtiene el progreso completo del sprint con métricas detalladas incluyendo story points.
+    """
+    # Construir JQL según si se especifica sprint específico o activo
+    if sprint_name:
+        base_jql = f'sprint = "{sprint_name}"'
+    else:
+        base_jql = 'sprint in openSprints()'
+    
+    if project_key:
+        jql_query = f'project = "{project_key}" AND {base_jql} ORDER BY status ASC, priority DESC'
+    else:
+        jql_query = f'{base_jql} ORDER BY status ASC, priority DESC'
+    
+    logfire.info("Ejecutando get_sprint_progress con JQL: {jql_query}", jql_query=jql_query)
+    
+    try:
+        jira = get_jira_client()
+        loop = asyncio.get_running_loop()
+        
+        with logfire.span("jira.sprint_progress", jql=jql_query):
+            issues_raw = await loop.run_in_executor(None, lambda: jira.jql(
+                jql_query, 
+                limit=200,  # Más límite para análisis completo
+                expand="changelog"
+            ))
+        
+        if not issues_raw or not issues_raw.get("issues"):
+            # Sprint sin issues
+            default_sprint = JiraSprint(
+                id="none", 
+                name=sprint_name or "Sprint no encontrado", 
+                state="none"
+            )
+            return SprintProgress(
+                sprint=default_sprint,
+                total_issues=0,
+                completed_issues=0,
+                progress_percentage=0.0
+            )
+        
+        # Procesar todos los issues para análisis completo
+        issues_found: List[JiraIssue] = []
+        issues_raw_data = issues_raw["issues"]
+        sprint_info = None
+        
+        for issue_data in issues_raw_data:
+            fields = issue_data.get("fields", {})
+            assignee_info = fields.get("assignee")
+            reporter_info = fields.get("reporter")
+            
+            # Extraer información del sprint
+            if not sprint_info:
+                sprint_info = _get_sprint_data_from_issue(issue_data)
+            
+            issues_found.append(
+                JiraIssue(
+                    key=issue_data.get("key"),
+                    summary=fields.get("summary"),
+                    status=fields.get("status", {}).get("name"),
+                    assignee=assignee_info.get("displayName") if assignee_info else None,
+                    reporter=reporter_info.get("displayName") if reporter_info else None,
+                    duedate=fields.get("duedate")
+                )
+            )
+        
+        # Sprint por defecto si no se pudo extraer
+        if not sprint_info:
+            sprint_info = JiraSprint(
+                id="unknown", 
+                name=sprint_name or "Sprint Analizado", 
+                state="active" if not sprint_name else "unknown"
+            )
+        
+        # Calcular métricas completas con story points
+        progress_data = _calculate_sprint_progress(issues_found, issues_raw_data)
+        
+        # Calcular días restantes desde la fecha del sprint
+        days_remaining = None
+        if sprint_info.end_date:
+            try:
+                end_date = datetime.fromisoformat(sprint_info.end_date.replace("Z", "+00:00"))
+                now = datetime.now(timezone.utc)
+                if end_date > now:
+                    days_remaining = (end_date.date() - now.date()).days
+                elif end_date.date() == now.date():
+                    days_remaining = 0
+                else:
+                    days_remaining = -1  # Sprint vencido
+            except Exception:
+                pass
+        
+        result = SprintProgress(
+            sprint=sprint_info,
+            total_story_points=progress_data["total_story_points"],
+            completed_story_points=progress_data["completed_story_points"],
+            total_issues=progress_data["total_issues"],
+            completed_issues=progress_data["completed_issues"],
+            progress_percentage=progress_data["progress_percentage"],
+            days_remaining=days_remaining
+        )
+        
+        logfire.info("get_sprint_progress analizó {count} issues del sprint {sprint_name} - {progress}% completado", 
+                     count=len(issues_found), sprint_name=sprint_info.name, progress=progress_data["progress_percentage"])
+        return result
+        
+    except Exception as e:
+        logfire.error("Error en get_sprint_progress: {error_message}", error_message=str(e), exc_info=True)
+        error_sprint = JiraSprint(id="error", name="Error al analizar progreso", state="error")
+        return SprintProgress(
+            sprint=error_sprint,
+            total_issues=0,
+            completed_issues=0,
+            progress_percentage=0.0
+        )
+
+# === FUNCIONES DE UTILIDAD PARA SPRINT ===
+
+def _extract_story_points(issue_data: dict) -> Optional[int]:
+    """Extrae story points de un issue de Jira."""
+    try:
+        fields = issue_data.get("fields", {})
+        # Los story points suelen estar en customfield_10016 o similar
+        # Probamos varias posibilidades comunes
+        story_points_fields = [
+            "customfield_10016", "customfield_10020", "customfield_10002", 
+            "customfield_10008", "storyPoints", "story_points"
+        ]
+        
+        for field_name in story_points_fields:
+            if field_name in fields and fields[field_name] is not None:
+                return int(float(fields[field_name]))
+        return None
+    except (ValueError, TypeError):
+        return None
+
+def _get_sprint_data_from_issue(issue_data: dict) -> Optional[JiraSprint]:
+    """Extrae datos del sprint de un issue."""
+    try:
+        fields = issue_data.get("fields", {})
+        sprint_field = fields.get("customfield_10020") or fields.get("sprint")
+        
+        if not sprint_field:
+            return None
+            
+        # El campo sprint puede ser una lista de sprints
+        if isinstance(sprint_field, list) and sprint_field:
+            # Tomar el último sprint (generalmente el activo)
+            sprint_info = sprint_field[-1]
+        else:
+            sprint_info = sprint_field
+            
+        if isinstance(sprint_info, dict):
+            # Calcular días restantes si hay fecha de fin
+            days_remaining = None
+            if sprint_info.get("endDate"):
+                try:
+                    end_date = datetime.fromisoformat(sprint_info["endDate"].replace("Z", "+00:00"))
+                    now = datetime.now(timezone.utc)
+                    if end_date > now:
+                        days_remaining = (end_date.date() - now.date()).days
+                except Exception:
+                    pass
+                    
+            return JiraSprint(
+                id=str(sprint_info.get("id", "unknown")),
+                name=sprint_info.get("name", "Unknown Sprint"),
+                state=sprint_info.get("state", "unknown").lower(),
+                start_date=sprint_info.get("startDate"),
+                end_date=sprint_info.get("endDate"),
+                goal=sprint_info.get("goal")
+            )
+        return None
+    except Exception:
+        return None
+
+def _calculate_sprint_progress(issues: List[JiraIssue], issues_raw_data: List[dict] = None) -> dict:
+    """Calcula métricas de progreso del sprint."""
+    total_issues = len(issues)
+    completed_issues = sum(1 for issue in issues if issue.status and issue.status.lower() in ["done", "closed", "resolved"])
+    in_progress_issues = sum(1 for issue in issues if issue.status and issue.status.lower() in ["in progress", "doing", "development"])
+    
+    # Calcular story points si tenemos datos raw
+    total_story_points = None
+    completed_story_points = None
+    
+    if issues_raw_data:
+        story_points_list = []
+        completed_story_points_list = []
+        
+        for i, issue_data in enumerate(issues_raw_data):
+            if i < len(issues):
+                sp = _extract_story_points(issue_data)
+                if sp is not None:
+                    story_points_list.append(sp)
+                    if issues[i].status and issues[i].status.lower() in ["done", "closed", "resolved"]:
+                        completed_story_points_list.append(sp)
+        
+        if story_points_list:
+            total_story_points = sum(story_points_list)
+            completed_story_points = sum(completed_story_points_list)
+    
+    # Calcular porcentaje de progreso
+    progress_percentage = (completed_issues / total_issues * 100) if total_issues > 0 else 0.0
+    
+    return {
+        "total_issues": total_issues,
+        "completed_issues": completed_issues,
+        "in_progress_issues": in_progress_issues,
+        "total_story_points": total_story_points,
+        "completed_story_points": completed_story_points,
+        "progress_percentage": round(progress_percentage, 1)
+    }
+
+# === TESTS MANUALES ===
 
 if __name__ == "__main__":
     from config import settings

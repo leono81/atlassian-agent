@@ -14,6 +14,10 @@ from tools.jira_tools import (
     # create_jira_issue as jira_create_issue_tool_func # Descomentar cuando esté lista
     get_user_hours_on_story as get_user_hours_on_story_tool_func,
     get_child_issues_status as get_child_issues_status_tool_func,
+    # === NUEVAS HERRAMIENTAS DE SPRINT ===
+    get_active_sprint_issues as get_active_sprint_issues_tool_func,
+    get_my_current_sprint_work as get_my_current_sprint_work_tool_func,
+    get_sprint_progress as get_sprint_progress_tool_func,
 )
 from tools.confluence_tools import (
     search_confluence_pages as conf_search_pages_tool_func,
@@ -58,6 +62,11 @@ search_memory_tool = Tool(search_memory_tool_func)
 # Nueva herramienta Jira: horas trabajadas por usuario en una historia
 get_user_hours_on_story_tool = Tool(get_user_hours_on_story_tool_func)
 
+# === NUEVAS HERRAMIENTAS DE SPRINT ===
+get_active_sprint_issues_tool = Tool(get_active_sprint_issues_tool_func)
+get_my_current_sprint_work_tool = Tool(get_my_current_sprint_work_tool_func)
+get_sprint_progress_tool = Tool(get_sprint_progress_tool_func)
+
 # Lista de todas las herramientas para el agente
 available_tools = [
     jira_search_tool,
@@ -74,6 +83,9 @@ available_tools = [
     save_memory_tool,
     search_memory_tool,
     get_user_hours_on_story_tool,
+    get_active_sprint_issues_tool,
+    get_my_current_sprint_work_tool,
+    get_sprint_progress_tool,
 ]
 
 # --- Creación del Agente Principal ---
@@ -88,7 +100,7 @@ main_agent = Agent(
         '   - Siempre que el usuario interactúe contigo (ya sea con una pregunta, solicitud, comando o registrar), consulta primero la memoria para identificar información relevante, alias, preferencias, proyectos, historias, tareas o configuraciones que puedan estar guardadas.\n'
         '   - Si no tienes informacion sobre el pedido del usuario, SIEMPRE busca en la memoria para obtenerla. Si aun asi no tienes informacion relevante, pregunta al usuario si desea guardarla en la memoria.\n'
         '\n'
-        'Integra la información encontrada en memoria de manera natural en tus respuestas y acciones, sin mencionar explícitamente que fue recuperada de la memoria, a menos que el usuario lo pregunte o sea importante aclararlo.\n'
+        'Integra la información encontada en memoria de manera natural en tus respuestas y acciones, sin mencionar explícitamente que fue recuperada de la memoria, a menos que el usuario lo pregunte o sea importante aclararlo.\n'
         '\n'
         'Si la memoria no tiene resultados relevantes y la información podría ser útil en el futuro, sugiere amablemente al usuario que puede guardarla para próximas consultas.\n'
         '\n'
@@ -100,6 +112,12 @@ main_agent = Agent(
         '- Puedes actualizar páginas existentes en Confluence (necesitarás el ID de la página y el nuevo contenido y/o título).\n'
         '- Puedes registrar tiempo trabajado (worklogs) en issues de Jira (necesitarás la clave del issue y el tiempo trabajado; la fecha/hora de inicio se asume como \'ahora\' si no se especifica, o puedes indicar una fecha/hora en formato ISO).\n'
         '- Puedes consultar todo el tiempo en memoria informacion relevante para la interacción con el usuario.\n'
+        '\n'
+        '***NUEVAS CAPACIDADES DE SPRINT***:\n'
+        '- Puedes obtener todos los issues del sprint activo con get_active_sprint_issues (ideal para "¿qué hay en el sprint actual?").\n'
+        '- Puedes obtener el trabajo específico del usuario en el sprint activo con get_my_current_sprint_work (ideal para "¿cuál es mi trabajo del sprint?").\n'
+        '- Puedes analizar el progreso completo del sprint con métricas detalladas usando get_sprint_progress (ideal para "¿cómo va el progreso del sprint?", incluye story points, porcentaje completado, días restantes).\n'
+        '- Todas estas herramientas pueden filtrar por proyecto específico si se proporciona la clave del proyecto.\n'
         '\n'
         #'Antes de realizar acciones que modifiquen datos (crear, actualizar, comentar), confirma con el usuario si es apropiado, a menos que la solicitud sea muy explícita.'
     ),
