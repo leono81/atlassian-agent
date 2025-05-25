@@ -46,6 +46,23 @@ class JiraWorklog(BaseModel):
     started: Optional[str] = None
     comment: Optional[str] = None
 
+# === NUEVAS CLASES PARA WORKLOG DETALLADO ===
+class UserWorklogSummary(BaseModel):
+    user_display_name: str
+    user_account_id: Optional[str] = None
+    total_hours: float
+    total_seconds: int
+    worklog_count: int
+    worklogs: List[JiraWorklog]
+
+class IssueWorklogReport(BaseModel):
+    issue_key: str
+    issue_summary: str
+    total_hours_all_users: float
+    total_seconds_all_users: int
+    total_worklog_entries: int
+    users_summary: List[UserWorklogSummary]
+
 # === NUEVAS CLASES PARA SPRINT ===
 class JiraSprint(BaseModel):
     id: str
@@ -70,6 +87,23 @@ class SprintProgress(BaseModel):
     completed_issues: int
     progress_percentage: float
     days_remaining: Optional[int] = None
+
+# === NUEVAS CLASES PARA BÚSQUEDA DE USUARIOS ===
+class JiraUser(BaseModel):
+    account_id: str
+    display_name: str
+    email_address: Optional[str] = None
+    active: bool = True
+    account_type: Optional[str] = None
+
+class UserSearchResult(BaseModel):
+    users_found: List[JiraUser]
+    total_found: int
+    search_query: str
+    exact_match: Optional[JiraUser] = None
+    suggestions: List[JiraUser] = []
+    requires_confirmation: bool = False
+    confirmation_message: Optional[str] = None
 
 def _clean_field_info_param(param_value: Any) -> Any:
     """
@@ -334,11 +368,130 @@ async def get_user_worklog_hours_for_issue(
 async def get_user_hours_on_story(
     issue_key: str = Field(..., description="Clave de la historia (issue), ej: 'PROJ-123'"),
     username_or_accountid: str = Field(..., description="Usuario (accountId, name o displayName)")
-) -> float:
+) -> Dict[str, Any]:
     """
     Devuelve la cantidad total de horas que un usuario trabajó en una historia (issue).
+    Incluye validación del usuario y manejo de confirmaciones.
     """
-    return await get_user_worklog_hours_for_issue(issue_key, username_or_accountid)
+    # Limpiar parámetros que pueden llegar como FieldInfo
+    issue_key = _clean_field_info_param(issue_key)
+    username_or_accountid = _clean_field_info_param(username_or_accountid)
+    
+    if not issue_key or not isinstance(issue_key, str):
+        return {
+            "hours": 0.0,
+            "requires_confirmation": False,
+            "message": "La clave del issue no puede estar vacía.",
+            "suggestions": []
+        }
+    
+    if not username_or_accountid or not isinstance(username_or_accountid, str):
+        return {
+            "hours": 0.0,
+            "requires_confirmation": False,
+            "message": "El identificador de usuario no puede estar vacío.",
+            "suggestions": []
+        }
+    
+    # Validar usuario primero
+    validation_result = await validate_jira_user(username_or_accountid)
+    
+    # Si requiere confirmación, devolver información para que el usuario confirme
+    if validation_result.requires_confirmation:
+        return {
+            "hours": 0.0,
+            "requires_confirmation": True,
+            "message": validation_result.confirmation_message,
+            "suggestions": [
+                {
+                    "display_name": user.display_name,
+                    "email": user.email_address,
+                    "account_id": user.account_id
+                }
+                for user in validation_result.suggestions
+            ]
+        }
+    
+    # Si no se encontró usuario
+    if not validation_result.exact_match:
+        return {
+            "hours": 0.0,
+            "requires_confirmation": False,
+            "message": validation_result.confirmation_message or f"Usuario '{username_or_accountid}' no encontrado.",
+            "suggestions": []
+        }
+    
+    # Si hay coincidencia exacta, proceder con la consulta
+    try:
+        hours = await get_user_worklog_hours_for_issue(issue_key, validation_result.exact_match.account_id)
+        return {
+            "hours": hours,
+            "requires_confirmation": False,
+            "message": f"Horas trabajadas por {validation_result.exact_match.display_name} en {issue_key}: {hours}h",
+            "user_confirmed": {
+                "display_name": validation_result.exact_match.display_name,
+                "email": validation_result.exact_match.email_address,
+                "account_id": validation_result.exact_match.account_id
+            }
+        }
+    except Exception as e:
+        logfire.error("Error al obtener horas para usuario validado: {error}", error=str(e))
+        return {
+            "hours": 0.0,
+            "requires_confirmation": False,
+            "message": f"Error al consultar horas: {str(e)}",
+            "suggestions": []
+                 }
+
+async def get_user_hours_with_confirmed_user(
+    issue_key: str = Field(..., description="Clave de la historia (issue), ej: 'PROJ-123'"),
+    user_account_id: str = Field(..., description="Account ID del usuario confirmado"),
+    user_display_name: str = Field(..., description="Nombre del usuario para referencia")
+) -> Dict[str, Any]:
+    """
+    Consulta las horas trabajadas usando un usuario ya confirmado por su account ID.
+    Esta función se usa después de que el usuario ha confirmado cuál usuario quiere consultar.
+    """
+    # Limpiar parámetros que pueden llegar como FieldInfo
+    issue_key = _clean_field_info_param(issue_key)
+    user_account_id = _clean_field_info_param(user_account_id)
+    user_display_name = _clean_field_info_param(user_display_name)
+    
+    if not issue_key or not isinstance(issue_key, str):
+        return {
+            "hours": 0.0,
+            "message": "La clave del issue no puede estar vacía."
+        }
+    
+    if not user_account_id or not isinstance(user_account_id, str):
+        return {
+            "hours": 0.0,
+            "message": "El account ID del usuario no puede estar vacío."
+        }
+    
+    if not user_display_name or not isinstance(user_display_name, str):
+        user_display_name = "Usuario confirmado"
+    
+    logfire.info("Consultando horas para usuario confirmado: {user} en {issue}", 
+                 user=user_display_name, issue=issue_key)
+    
+    try:
+        hours = await get_user_worklog_hours_for_issue(issue_key, user_account_id)
+        return {
+            "hours": hours,
+            "message": f"Horas trabajadas por {user_display_name} en {issue_key}: {hours}h",
+            "user_confirmed": {
+                "display_name": user_display_name,
+                "account_id": user_account_id
+            }
+        }
+    except Exception as e:
+        logfire.error("Error al obtener horas para usuario confirmado {user}: {error}", 
+                      user=user_display_name, error=str(e))
+        return {
+            "hours": 0.0,
+            "message": f"Error al consultar horas para {user_display_name}: {str(e)}"
+        }
 
 async def get_child_issues_status(
     parent_issue_key: str = Field(..., description="Clave de la historia o iniciativa principal (ej: 'PROJ-123')"),
@@ -377,6 +530,388 @@ async def get_child_issues_status(
             "vencimiento": status_due
         })
     return results
+
+async def search_jira_users(
+    query: str = Field(..., description="Término de búsqueda para usuarios. Puede ser nombre parcial, email o displayName"),
+    max_results: int = Field(default=10, description="Número máximo de resultados (1-50)")
+) -> UserSearchResult:
+    """
+    Busca usuarios en Jira por nombre, email o displayName.
+    Útil cuando no recuerdas el nombre exacto del usuario.
+    """
+    # Limpiar parámetros que pueden llegar como FieldInfo
+    query = _clean_field_info_param(query)
+    max_results = _clean_field_info_param(max_results) or 10
+    
+    if not query or not isinstance(query, str):
+        return UserSearchResult(
+            users_found=[],
+            total_found=0,
+            search_query=str(query) if query else "vacío",
+            exact_match=None,
+            suggestions=[],
+            requires_confirmation=False,
+            confirmation_message="La consulta de búsqueda no puede estar vacía."
+        )
+    
+    actual_max_results = min(max(1, max_results), 50)
+    logfire.info("Ejecutando search_jira_users con query: {query}, max_results: {max_results}",
+                 query=query, max_results=actual_max_results)
+    
+    try:
+        jira = get_jira_client()
+        loop = asyncio.get_running_loop()
+        
+        # Usar la API de búsqueda de usuarios de Jira
+        with logfire.span("jira.user_search", query=query, limit=actual_max_results):
+            # Para Jira Cloud, usar user_find_by_user_string
+            users_raw = await loop.run_in_executor(
+                None, 
+                lambda: jira.user_find_by_user_string(
+                    query=query, 
+                    start=0, 
+                    limit=actual_max_results, 
+                    include_inactive_users=False
+                )
+            )
+        
+        if not users_raw:
+            return UserSearchResult(
+                users_found=[],
+                total_found=0,
+                search_query=query,
+                exact_match=None,
+                suggestions=[]
+            )
+        
+        # Procesar usuarios encontrados
+        users_found = []
+        exact_match = None
+        
+        for user_data in users_raw:
+            user = JiraUser(
+                account_id=user_data.get('accountId', ''),
+                display_name=user_data.get('displayName', 'Usuario sin nombre'),
+                email_address=user_data.get('emailAddress'),
+                active=user_data.get('active', True),
+                account_type=user_data.get('accountType', 'atlassian')
+            )
+            users_found.append(user)
+            
+            # Verificar coincidencia exacta
+            if (user.display_name.lower() == query.lower() or 
+                (user.email_address and user.email_address.lower() == query.lower())):
+                exact_match = user
+        
+        # Crear sugerencias (usuarios más relevantes)
+        suggestions = users_found[:5] if len(users_found) > 1 else []
+        
+        result = UserSearchResult(
+            users_found=users_found,
+            total_found=len(users_found),
+            search_query=query,
+            exact_match=exact_match,
+            suggestions=suggestions
+        )
+        
+        logfire.info("search_jira_users encontró {count} usuarios para query '{query}'",
+                     count=len(users_found), query=query)
+        return result
+        
+    except Exception as e:
+        logfire.error("Error en search_jira_users para query '{query}': {error_message}",
+                      query=query, error_message=str(e), exc_info=True)
+        return UserSearchResult(
+            users_found=[],
+            total_found=0,
+            search_query=query,
+            exact_match=None,
+            suggestions=[],
+        )
+
+async def validate_jira_user(
+    user_identifier: str = Field(..., description="Identificador del usuario: accountId, email o displayName")
+) -> UserSearchResult:
+    """
+    Valida si un usuario existe en Jira y devuelve información para confirmación.
+    Si no hay coincidencia exacta, requiere confirmación del usuario antes de proceder.
+    """
+    # Limpiar parámetro que puede llegar como FieldInfo
+    user_identifier = _clean_field_info_param(user_identifier)
+    
+    if not user_identifier or not isinstance(user_identifier, str):
+        return UserSearchResult(
+            users_found=[],
+            total_found=0,
+            search_query=str(user_identifier) if user_identifier else "vacío",
+            exact_match=None,
+            suggestions=[],
+            requires_confirmation=False,
+            confirmation_message="El identificador de usuario no puede estar vacío."
+        )
+    
+    logfire.info("Ejecutando validate_jira_user para: {user_identifier}", user_identifier=user_identifier)
+    
+    try:
+        jira = get_jira_client()
+        loop = asyncio.get_running_loop()
+        
+        # Primero intentar obtener el usuario directamente si parece ser un accountId
+        if user_identifier and len(user_identifier) > 20 and ':' in user_identifier:
+            try:
+                with logfire.span("jira.user_direct", user_id=user_identifier):
+                    user_data = await loop.run_in_executor(None, jira.user, user_identifier)
+                
+                if user_data:
+                    validated_user = JiraUser(
+                        account_id=user_data.get('accountId', user_identifier),
+                        display_name=user_data.get('displayName', 'Usuario sin nombre'),
+                        email_address=user_data.get('emailAddress'),
+                        active=user_data.get('active', True),
+                        account_type=user_data.get('accountType', 'atlassian')
+                    )
+                    logfire.info("validate_jira_user encontró usuario directo: {display_name}",
+                                 display_name=validated_user.display_name)
+                    return UserSearchResult(
+                        users_found=[validated_user],
+                        total_found=1,
+                        search_query=user_identifier,
+                        exact_match=validated_user,
+                        suggestions=[],
+                        requires_confirmation=False
+                    )
+            except Exception:
+                # Si falla, continuar con búsqueda
+                pass
+        
+        # Si no es accountId o falló, buscar por nombre/email
+        with logfire.span("jira.user_search_validation", query=user_identifier):
+            users_raw = await loop.run_in_executor(
+                None,
+                lambda: jira.user_find_by_user_string(
+                    query=user_identifier,
+                    start=0,
+                    limit=10,
+                    include_inactive_users=False
+                )
+            )
+        
+        if not users_raw:
+            logfire.info("validate_jira_user no encontró usuario para: {user_identifier}",
+                         user_identifier=user_identifier)
+            return UserSearchResult(
+                users_found=[],
+                total_found=0,
+                search_query=user_identifier,
+                exact_match=None,
+                suggestions=[],
+                requires_confirmation=False,
+                confirmation_message=f"No se encontró ningún usuario con '{user_identifier}'. Verifica el nombre o email."
+            )
+        
+        # Procesar usuarios encontrados
+        users_found = []
+        exact_match = None
+        
+        for user_data in users_raw:
+            display_name = user_data.get('displayName', '')
+            email = user_data.get('emailAddress', '')
+            account_id = user_data.get('accountId', '')
+            
+            user = JiraUser(
+                account_id=account_id,
+                display_name=display_name,
+                email_address=email,
+                active=user_data.get('active', True),
+                account_type=user_data.get('accountType', 'atlassian')
+            )
+            users_found.append(user)
+            
+            # Verificar coincidencia exacta (más estricta)
+            if (display_name.lower() == user_identifier.lower() or
+                (email and email.lower() == user_identifier.lower()) or
+                account_id == user_identifier):
+                exact_match = user
+        
+        # Si hay coincidencia exacta, no requiere confirmación
+        if exact_match:
+            logfire.info("validate_jira_user validó usuario exacto: {display_name}",
+                         display_name=exact_match.display_name)
+            return UserSearchResult(
+                users_found=users_found,
+                total_found=len(users_found),
+                search_query=user_identifier,
+                exact_match=exact_match,
+                suggestions=users_found[:5],
+                requires_confirmation=False
+            )
+        
+        # Si no hay coincidencia exacta, requiere confirmación
+        suggestions = users_found[:5]
+        confirmation_msg = f"No se encontró coincidencia exacta para '{user_identifier}'. "
+        if suggestions:
+            confirmation_msg += f"¿Te refieres a alguno de estos usuarios? Confirma cuál quieres usar."
+        
+        logfire.info("validate_jira_user requiere confirmación para: {user_identifier}, encontró {count} sugerencias",
+                     user_identifier=user_identifier, count=len(suggestions))
+        
+        return UserSearchResult(
+            users_found=users_found,
+            total_found=len(users_found),
+            search_query=user_identifier,
+            exact_match=None,
+            suggestions=suggestions,
+            requires_confirmation=True,
+            confirmation_message=confirmation_msg
+        )
+        
+    except Exception as e:
+        logfire.error("Error en validate_jira_user para '{user_identifier}': {error_message}",
+                      user_identifier=user_identifier, error_message=str(e), exc_info=True)
+        return UserSearchResult(
+            users_found=[],
+            total_found=0,
+            search_query=user_identifier,
+            exact_match=None,
+            suggestions=[],
+            requires_confirmation=False,
+            confirmation_message=f"Error al buscar usuario '{user_identifier}': {str(e)}"
+        )
+
+async def get_all_worklog_hours_for_issue(
+    issue_key: str = Field(..., description="Clave del issue (historia, tarea o subtarea), ej: 'PROJ-123'")
+) -> IssueWorklogReport:
+    """
+    Obtiene todas las horas registradas en un issue, detalladas por usuario.
+    Devuelve un reporte completo con el desglose de tiempo por cada usuario que trabajó en el issue.
+    """
+    logfire.info("Ejecutando get_all_worklog_hours_for_issue para: {issue_key}", issue_key=issue_key)
+    
+    try:
+        jira = get_jira_client()
+        loop = asyncio.get_running_loop()
+        
+        # Obtener detalles del issue para el resumen
+        with logfire.span("jira.issue_details_for_worklog", issue_key=issue_key):
+            issue_data = await loop.run_in_executor(None, jira.issue, issue_key)
+        
+        if not issue_data:
+            return IssueWorklogReport(
+                issue_key=issue_key,
+                issue_summary=f"Issue {issue_key} no encontrado",
+                total_hours_all_users=0.0,
+                total_seconds_all_users=0,
+                total_worklog_entries=0,
+                users_summary=[]
+            )
+        
+        issue_summary = issue_data.get("fields", {}).get("summary", "Sin resumen")
+        
+        # Obtener todos los worklogs del issue
+        with logfire.span("jira.get_all_worklogs", issue_key=issue_key):
+            worklogs_data = await loop.run_in_executor(None, lambda: jira.issue_get_worklog(issue_key))
+        
+        if not worklogs_data or not worklogs_data.get('worklogs'):
+            return IssueWorklogReport(
+                issue_key=issue_key,
+                issue_summary=issue_summary,
+                total_hours_all_users=0.0,
+                total_seconds_all_users=0,
+                total_worklog_entries=0,
+                users_summary=[]
+            )
+        
+        # Agrupar worklogs por usuario
+        users_worklog_data = {}
+        total_seconds_all = 0
+        total_entries = 0
+        
+        for worklog_raw in worklogs_data.get('worklogs', []):
+            author = worklog_raw.get('author', {})
+            user_display_name = author.get('displayName', 'Usuario desconocido')
+            user_account_id = author.get('accountId') or author.get('name')
+            
+            # Crear clave única para el usuario
+            user_key = f"{user_display_name}|{user_account_id or 'no-id'}"
+            
+            # Procesar comentario del worklog
+            comment_from_response = worklog_raw.get('comment')
+            comment_text = ""
+            if isinstance(comment_from_response, str):
+                comment_text = comment_from_response
+            elif isinstance(comment_from_response, dict):
+                try:
+                    comment_text = comment_from_response['content'][0]['content'][0]['text']
+                except:
+                    comment_text = str(comment_from_response) if comment_from_response else ""
+            
+            # Crear objeto JiraWorklog
+            worklog_obj = JiraWorklog(
+                id=str(worklog_raw['id']),
+                self_link=worklog_raw.get('self'),
+                author=user_display_name,
+                time_spent_seconds=worklog_raw.get('timeSpentSeconds', 0),
+                started=worklog_raw.get('started'),
+                comment=comment_text
+            )
+            
+            # Acumular datos por usuario
+            if user_key not in users_worklog_data:
+                users_worklog_data[user_key] = {
+                    'display_name': user_display_name,
+                    'account_id': user_account_id,
+                    'total_seconds': 0,
+                    'worklogs': []
+                }
+            
+            users_worklog_data[user_key]['total_seconds'] += worklog_raw.get('timeSpentSeconds', 0)
+            users_worklog_data[user_key]['worklogs'].append(worklog_obj)
+            
+            total_seconds_all += worklog_raw.get('timeSpentSeconds', 0)
+            total_entries += 1
+        
+        # Crear resúmenes por usuario
+        users_summary = []
+        for user_data in users_worklog_data.values():
+            user_summary = UserWorklogSummary(
+                user_display_name=user_data['display_name'],
+                user_account_id=user_data['account_id'],
+                total_hours=round(user_data['total_seconds'] / 3600, 2),
+                total_seconds=user_data['total_seconds'],
+                worklog_count=len(user_data['worklogs']),
+                worklogs=user_data['worklogs']
+            )
+            users_summary.append(user_summary)
+        
+        # Ordenar usuarios por total de horas (descendente)
+        users_summary.sort(key=lambda x: x.total_seconds, reverse=True)
+        
+        # Crear reporte final
+        report = IssueWorklogReport(
+            issue_key=issue_key,
+            issue_summary=issue_summary,
+            total_hours_all_users=round(total_seconds_all / 3600, 2),
+            total_seconds_all_users=total_seconds_all,
+            total_worklog_entries=total_entries,
+            users_summary=users_summary
+        )
+        
+        logfire.info("get_all_worklog_hours_for_issue completado para {issue_key}: {total_hours}h total, {user_count} usuarios",
+                     issue_key=issue_key, total_hours=report.total_hours_all_users, user_count=len(users_summary))
+        
+        return report
+        
+    except Exception as e:
+        logfire.error("Error en get_all_worklog_hours_for_issue para {issue_key}: {error_message}", 
+                      issue_key=issue_key, error_message=str(e), exc_info=True)
+        return IssueWorklogReport(
+            issue_key=issue_key,
+            issue_summary=f"Error al obtener worklogs: {str(e)}",
+            total_hours_all_users=0.0,
+            total_seconds_all_users=0,
+            total_worklog_entries=0,
+            users_summary=[]
+        )
 
 async def get_active_sprint_issues(
     project_key: Optional[str] = Field(default=None, description="Clave del proyecto para filtrar (ej: 'PSIMDESASW'). Si no se especifica, busca en todos los proyectos."),

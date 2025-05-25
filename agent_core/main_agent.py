@@ -14,6 +14,11 @@ from tools.jira_tools import (
     # create_jira_issue as jira_create_issue_tool_func # Descomentar cuando esté lista
     get_user_hours_on_story as get_user_hours_on_story_tool_func,
     get_child_issues_status as get_child_issues_status_tool_func,
+    get_all_worklog_hours_for_issue as get_all_worklog_hours_for_issue_tool_func,
+    # === NUEVAS HERRAMIENTAS DE BÚSQUEDA DE USUARIOS ===
+    search_jira_users as search_jira_users_tool_func,
+    validate_jira_user as validate_jira_user_tool_func,
+    get_user_hours_with_confirmed_user as get_user_hours_with_confirmed_user_tool_func,
     # === NUEVAS HERRAMIENTAS DE SPRINT ===
     get_active_sprint_issues as get_active_sprint_issues_tool_func,
     get_my_current_sprint_work as get_my_current_sprint_work_tool_func,
@@ -62,6 +67,14 @@ search_memory_tool = Tool(search_memory_tool_func)
 # Nueva herramienta Jira: horas trabajadas por usuario en una historia
 get_user_hours_on_story_tool = Tool(get_user_hours_on_story_tool_func)
 
+# Nueva herramienta Jira: todas las horas registradas por todos los usuarios en un issue
+get_all_worklog_hours_for_issue_tool = Tool(get_all_worklog_hours_for_issue_tool_func)
+
+# === NUEVAS HERRAMIENTAS DE BÚSQUEDA DE USUARIOS ===
+search_jira_users_tool = Tool(search_jira_users_tool_func)
+validate_jira_user_tool = Tool(validate_jira_user_tool_func)
+get_user_hours_with_confirmed_user_tool = Tool(get_user_hours_with_confirmed_user_tool_func)
+
 # === NUEVAS HERRAMIENTAS DE SPRINT ===
 get_active_sprint_issues_tool = Tool(get_active_sprint_issues_tool_func)
 get_my_current_sprint_work_tool = Tool(get_my_current_sprint_work_tool_func)
@@ -83,6 +96,10 @@ available_tools = [
     save_memory_tool,
     search_memory_tool,
     get_user_hours_on_story_tool,
+    get_all_worklog_hours_for_issue_tool,
+    search_jira_users_tool,
+    validate_jira_user_tool,
+    get_user_hours_with_confirmed_user_tool,
     get_active_sprint_issues_tool,
     get_my_current_sprint_work_tool,
     get_sprint_progress_tool,
@@ -154,11 +171,49 @@ main_agent = Agent(
         'NUNCA uses viñetas (○, •, -) para los títulos principales. SIEMPRE usa números (1., 2., 3.) y **negrita** para los títulos.\n'
         'Si no hay páginas encontradas, indícalo claramente.\n'
         '\n'
+        '***FORMATO OBLIGATORIO para mostrar usuarios encontrados***:\n'
+        'SIEMPRE usa este formato exacto en Markdown:\n'
+        '\n'
+        '1. **NOMBRE-DEL-USUARIO**\n'
+        '   - **Email:** email@empresa.com\n'
+        '   - **Account ID:** 5b10a2844c20165700ede21g\n'
+        '   - **Estado:** Activo/Inactivo\n'
+        '\n'
+        '2. **OTRO-USUARIO**\n'
+        '   - **Email:** otro@empresa.com\n'
+        '   - **Account ID:** 5b10ac8d82e05b22cc7d4ef5\n'
+        '   - **Estado:** Activo\n'
+        '\n'
+        'EJEMPLO REAL:\n'
+        '1. **Juan Pérez**\n'
+        '   - **Email:** juan.perez@empresa.com\n'
+        '   - **Account ID:** 5b10a2844c20165700ede21g\n'
+        '   - **Estado:** Activo\n'
+        '\n'
+        'Si hay coincidencia exacta, menciona "✅ **Coincidencia exacta encontrada**" antes de la lista.\n'
+        'Si no hay usuarios encontrados, indícalo claramente.\n'
+        '\n'
+        '***FLUJO OBLIGATORIO para consultas de usuarios***:\n'
+        '1. Si el usuario pide información sobre un usuario específico (ej. "horas de Abel"):\n'
+        '   - Usa validate_jira_user o search_jira_users para buscar\n'
+        '   - Si NO hay coincidencia exacta, muestra las opciones y pide confirmación\n'
+        '   - NO procedas hasta que el usuario confirme cuál usuario quiere\n'
+        '   - Una vez confirmado, usa get_user_hours_with_confirmed_user\n'
+        '\n'
+        '2. Si hay coincidencia exacta, procede directamente con la consulta\n'
+        '\n'
+        '3. NUNCA asumas o "adivines" cuál usuario quiere el usuario\n'
+        '\n'
         '***NUEVAS CAPACIDADES***:\n'
         '- Puedes añadir comentarios a issues de Jira si el usuario lo solicita.\n'
         '- Puedes crear nuevas páginas en Confluence si el usuario lo solicita (necesitarás el contenido, título y clave del espacio).\n'
         '- Puedes actualizar páginas existentes en Confluence (necesitarás el ID de la página y el nuevo contenido y/o título).\n'
         '- Puedes registrar tiempo trabajado (worklogs) en issues de Jira (necesitarás la clave del issue y el tiempo trabajado; la fecha/hora de inicio se asume como \'ahora\' si no se especifica, o puedes indicar una fecha/hora en formato ISO).\n'
+        '- Puedes obtener un reporte completo de todas las horas registradas en un issue específico, detallado por usuario, con get_all_worklog_hours_for_issue (ideal para "¿cuántas horas se han registrado en esta historia?" o "¿quién trabajó en esta tarea y cuánto tiempo?").\n'
+        '- Puedes buscar usuarios en Jira cuando no recuerdes el nombre exacto con search_jira_users (ideal para "busca usuarios con nombre Juan" o "encuentra el usuario con email juan@empresa.com").\n'
+        '- Puedes validar si un usuario existe antes de usarlo en operaciones con validate_jira_user (útil para confirmar que un nombre de usuario es correcto).\n'
+        '- IMPORTANTE: Si no hay coincidencia exacta de usuario, SIEMPRE debes mostrar las opciones encontradas y pedir confirmación al usuario antes de proceder. NUNCA asumas cuál usuario quiere el usuario.\n'
+        '- Una vez que el usuario confirme qué usuario específico quiere, usa get_user_hours_with_confirmed_user con el account_id del usuario confirmado.\n'
         '- Puedes consultar todo el tiempo en memoria informacion relevante para la interacción con el usuario.\n'
         '\n'
         '***NUEVAS CAPACIDADES DE SPRINT***:\n'
