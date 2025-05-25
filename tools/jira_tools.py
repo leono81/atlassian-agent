@@ -71,6 +71,18 @@ class SprintProgress(BaseModel):
     progress_percentage: float
     days_remaining: Optional[int] = None
 
+def _clean_field_info_param(param_value: Any) -> Any:
+    """
+    Función utilitaria para limpiar parámetros que pueden llegar como FieldInfo
+    en lugar de sus valores reales. Esto ocurre cuando el LLM o framework
+    no maneja correctamente los parámetros opcionales.
+    """
+    if isinstance(param_value, FieldInfo):
+        return param_value.default
+    elif isinstance(param_value, str) and "annotation=NoneType" in param_value:
+        return None
+    return param_value
+
 async def search_issues(
     jql_query: str = Field(..., description="La consulta JQL para buscar issues. Ejemplo: 'project = \"PROJ\" AND status = Open ORDER BY priority DESC'"),
     max_results: int = 10
@@ -212,19 +224,11 @@ async def add_worklog_to_jira_issue(
     comment: Optional[str] = Field(default=None, description="Un comentario opcional para el worklog."),
     confirm: bool = Field(default=False, description="Confirma si se debe proceder con el registro si la fecha fue interpretada.")
 ) -> JiraWorklog:
-    # --- CORRECTO MANEJO DE VALORES DE ENTRADA ---
-    actual_started_datetime_str_val: Optional[str]
-    if isinstance(started_datetime_str, FieldInfo):
-        actual_started_datetime_str_val = started_datetime_str.default
-    else:
-        actual_started_datetime_str_val = started_datetime_str
-
-    actual_comment_val: Optional[str]
-    if isinstance(comment, FieldInfo):
-        actual_comment_val = comment.default
-    else:
-        actual_comment_val = comment
-
+    # Limpiar parámetros que pueden llegar como FieldInfo
+    started_datetime_str = _clean_field_info_param(started_datetime_str)
+    comment = _clean_field_info_param(comment)
+    
+    # Validar que time_spent (obligatorio) no sea FieldInfo
     if isinstance(time_spent, FieldInfo):
          logfire.error("El parámetro obligatorio 'time_spent' fue recibido como FieldInfo. Esto no debería ocurrir.")
          raise ValueError("Error interno: 'time_spent' no fue proporcionado correctamente.")
@@ -240,16 +244,16 @@ async def add_worklog_to_jira_issue(
 
         # --- Manejo robusto de fechas ---
         # Si started_datetime_str es una fecha relativa (no ISO ni 'ahora'), usar parse_relative_date
-        if not actual_started_datetime_str_val or (isinstance(actual_started_datetime_str_val, str) and actual_started_datetime_str_val.lower() == 'ahora'):
+        if not started_datetime_str or (isinstance(started_datetime_str, str) and started_datetime_str.lower() == 'ahora'):
             _started_dt_object = datetime.now(timezone.utc).astimezone()
         else:
             try:
-                _started_dt_object = datetime.fromisoformat(actual_started_datetime_str_val.replace("Z", "+00:00"))
+                _started_dt_object = datetime.fromisoformat(started_datetime_str.replace("Z", "+00:00"))
                 if _started_dt_object.tzinfo is None:
                     _started_dt_object = _started_dt_object.replace(tzinfo=timezone.utc).astimezone()
             except ValueError:
                 # Usar date_utils para fechas relativas
-                parsed_date = parse_relative_date(actual_started_datetime_str_val)
+                parsed_date = parse_relative_date(started_datetime_str)
                 if parsed_date:
                     # Por defecto, hora 08:30 si no se especifica
                     _started_dt_object = datetime.combine(parsed_date, time(8, 30)).astimezone()
@@ -262,7 +266,7 @@ async def add_worklog_to_jira_issue(
                         # Devuelve un JiraWorklog especial solo con el mensaje de confirmación
                         return JiraWorklog(id="CONFIRM_REQUIRED", comment=msg)
                 else:
-                    raise ValueError(f"No se pudo interpretar la fecha '{actual_started_datetime_str_val}'. Usa formato ISO o una fecha relativa reconocida.")
+                    raise ValueError(f"No se pudo interpretar la fecha '{started_datetime_str}'. Usa formato ISO o una fecha relativa reconocida.")
         # Formatear como string para Jira
         started_str = _started_dt_object.strftime("%Y-%m-%dT%H:%M:%S.000%z")
         # Llamada correcta: argumentos posicionales
@@ -327,8 +331,6 @@ async def get_user_worklog_hours_for_issue(
     total_hours = total_seconds / 3600
     return total_hours
 
-from pydantic import Field
-
 async def get_user_hours_on_story(
     issue_key: str = Field(..., description="Clave de la historia (issue), ej: 'PROJ-123'"),
     username_or_accountid: str = Field(..., description="Usuario (accountId, name o displayName)")
@@ -376,8 +378,6 @@ async def get_child_issues_status(
         })
     return results
 
-# === FUNCIONES PRINCIPALES DE SPRINT ===
-
 async def get_active_sprint_issues(
     project_key: Optional[str] = Field(default=None, description="Clave del proyecto para filtrar (ej: 'PSIMDESASW'). Si no se especifica, busca en todos los proyectos."),
     max_results: int = 20
@@ -385,6 +385,9 @@ async def get_active_sprint_issues(
     """
     Obtiene todos los issues del sprint activo con información completa del sprint.
     """
+    # Limpiar parámetros que pueden llegar como FieldInfo
+    project_key = _clean_field_info_param(project_key)
+    
     actual_max_results = min(max(1, max_results), 100)
     
     # Construir JQL para sprint activo
@@ -488,6 +491,10 @@ async def get_my_current_sprint_work(
     """
     Obtiene los issues del sprint activo asignados al usuario especificado o actual.
     """
+    # Limpiar parámetros que pueden llegar como FieldInfo
+    project_key = _clean_field_info_param(project_key)
+    assignee = _clean_field_info_param(assignee)
+    
     # Construir JQL para trabajo del usuario en sprint activo
     assignee_clause = f'assignee = "{assignee}"' if assignee else 'assignee = currentUser()'
     
@@ -591,6 +598,10 @@ async def get_sprint_progress(
     """
     Obtiene el progreso completo del sprint con métricas detalladas incluyendo story points.
     """
+    # Limpiar parámetros que pueden llegar como FieldInfo
+    project_key = _clean_field_info_param(project_key)
+    sprint_name = _clean_field_info_param(sprint_name)
+    
     # Construir JQL según si se especifica sprint específico o activo
     if sprint_name:
         base_jql = f'sprint = "{sprint_name}"'
@@ -704,8 +715,6 @@ async def get_sprint_progress(
             progress_percentage=0.0
         )
 
-# === FUNCIONES DE UTILIDAD PARA SPRINT ===
-
 def _extract_story_points(issue_data: dict) -> Optional[int]:
     """Extrae story points de un issue de Jira."""
     try:
@@ -802,7 +811,7 @@ def _calculate_sprint_progress(issues: List[JiraIssue], issues_raw_data: List[di
         "progress_percentage": round(progress_percentage, 1)
     }
 
-# === TESTS MANUALES ===
+
 
 if __name__ == "__main__":
     from config import settings

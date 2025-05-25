@@ -7,13 +7,54 @@ from pydantic import BaseModel, Field
 from pydantic.fields import FieldInfo # <--- IMPORTAR FieldInfo
 
 from agent_core.confluence_instances import get_confluence_client
+from config import settings
 import logfire
 
-# ... (Clases ConfluencePage, ConfluencePageDetails, CreatedConfluencePage sin cambios) ...
+def _build_full_confluence_url(relative_url: Optional[str]) -> Optional[str]:
+    """
+    Construye una URL completa de Confluence usando la URL base del settings.
+    Maneja tanto URLs relativas como absolutas y asegura que incluya /wiki/ cuando sea necesario.
+    """
+    if not relative_url or not settings.CONFLUENCE_URL:
+        return relative_url
+    
+    # Si ya es una URL completa, devolverla tal como está
+    if relative_url.startswith('http'):
+        return relative_url
+    
+    # Construir la URL base
+    base_url = settings.CONFLUENCE_URL.rstrip('/')
+    
+    # Limpiar la URL relativa
+    clean_relative = relative_url.lstrip('/')
+    
+    # Si la URL relativa no empieza con 'wiki/', agregarla
+    if not clean_relative.startswith('wiki/'):
+        # Si empieza con 'spaces/' o 'pages/', agregar 'wiki/' antes
+        if clean_relative.startswith(('spaces/', 'pages/')):
+            clean_relative = f"wiki/{clean_relative}"
+        # Si no tiene ningún prefijo reconocido, asumir que necesita 'wiki/'
+        elif clean_relative and not clean_relative.startswith(('api/', 'rest/')):
+            clean_relative = f"wiki/{clean_relative}"
+    
+    final_url = f"{base_url}/{clean_relative}"
+    
+    # Log para debugging
+    logfire.debug("URL construction: {original} -> {final}", original=relative_url, final=final_url)
+    
+    return final_url
+
 class ConfluencePage(BaseModel):
     id: str
     title: str
     space_key: Optional[str] = None
+    space_name: Optional[str] = None
+    author: Optional[str] = None
+    created_date: Optional[str] = None
+    modified_date: Optional[str] = None
+    version: Optional[int] = None
+    excerpt: Optional[str] = None
+    web_url: Optional[str] = None
 
 class ConfluencePageDetails(ConfluencePage):
     body_storage: Optional[str] = None
@@ -51,7 +92,7 @@ async def search_confluence_pages(
             if space_key:
                 cql_to_execute = f"(space = \"{space_key}\") AND ({cql_to_execute})"
         
-        search_endpoint = f"rest/api/content/search?cql={cql_to_execute}&limit={actual_max_results}&expand=space"
+        search_endpoint = f"rest/api/content/search?cql={cql_to_execute}&limit={actual_max_results}&expand=space,history.lastUpdated,history.createdBy,version,excerpt,_links.webui"
 
         with logfire.span("confluence.cql_search", cql=cql_to_execute, limit=actual_max_results):
             results_raw = await loop.run_in_executor(None, lambda: confluence.get(search_endpoint))
@@ -60,11 +101,34 @@ async def search_confluence_pages(
         if results_raw and results_raw.get("results"):
             for page_data in results_raw["results"]:
                 space_info = page_data.get("space", {})
+                history_info = page_data.get("history", {})
+                created_by_info = history_info.get("createdBy", {})
+                last_updated_info = history_info.get("lastUpdated", {})
+                version_info = page_data.get("version", {})
+                links_info = page_data.get("_links", {})
+                
+                # Extraer excerpt y limpiar HTML básico
+                raw_excerpt = page_data.get("excerpt", "")
+                clean_excerpt = None
+                if raw_excerpt:
+                    # Remover tags HTML básicos para mostrar texto limpio
+                    import re
+                    clean_excerpt = re.sub(r'<[^>]+>', '', raw_excerpt).strip()
+                    if len(clean_excerpt) > 150:
+                        clean_excerpt = clean_excerpt[:150] + "..."
+                
                 pages_found.append(
                     ConfluencePage(
                         id=page_data.get("id"),
                         title=page_data.get("title"),
-                        space_key=space_info.get("key") if space_info else None
+                        space_key=space_info.get("key") if space_info else None,
+                        space_name=space_info.get("name") if space_info else None,
+                        author=created_by_info.get("displayName") if created_by_info else None,
+                        created_date=history_info.get("createdDate"),
+                        modified_date=last_updated_info.get("when") if last_updated_info else None,
+                        version=version_info.get("number") if version_info else None,
+                        excerpt=clean_excerpt,
+                        web_url=_build_full_confluence_url(links_info.get("webui")) if links_info else None
                     )
                 )
         logfire.info("search_confluence_pages encontró {count} páginas.", count=len(pages_found))
@@ -83,17 +147,30 @@ async def get_confluence_page_content(
         confluence = get_confluence_client()
         loop = asyncio.get_running_loop()
         with logfire.span("confluence.page_content", page_id=page_id):
-            page_data = await loop.run_in_executor(None, lambda: confluence.get_page_by_id(page_id, expand="body.storage,space,version"))
+            page_data = await loop.run_in_executor(None, lambda: confluence.get_page_by_id(page_id, expand="body.storage,space,version,history.lastUpdated,history.createdBy,_links.webui"))
         
         if not page_data:
             return ConfluencePageDetails(id=page_id, title=f"No se encontró la página con ID {page_id}")
 
         space_info = page_data.get("space", {})
         body_info = page_data.get("body", {}).get("storage", {})
+        history_info = page_data.get("history", {})
+        created_by_info = history_info.get("createdBy", {})
+        last_updated_info = history_info.get("lastUpdated", {})
+        version_info = page_data.get("version", {})
+        links_info = page_data.get("_links", {})
+        
         details = ConfluencePageDetails(
             id=page_data.get("id"),
             title=page_data.get("title"),
             space_key=space_info.get("key") if space_info else None,
+            space_name=space_info.get("name") if space_info else None,
+            author=created_by_info.get("displayName") if created_by_info else None,
+            created_date=history_info.get("createdDate"),
+            modified_date=last_updated_info.get("when") if last_updated_info else None,
+            version=version_info.get("number") if version_info else None,
+            excerpt=None,  # No necesitamos excerpt para detalles completos
+            web_url=_build_full_confluence_url(links_info.get("webui")) if links_info else None,
             body_storage=body_info.get("value") if body_info else None
         )
         logfire.info("get_confluence_page_content obtuvo contenido para {page_id}", page_id=page_id)
@@ -156,7 +233,7 @@ async def create_confluence_page(
             id=created_page_data['id'],
             title=created_page_data['title'],
             space_key=space_key, 
-            link_web_ui=_links.get('webui') if _links else None
+            link_web_ui=_build_full_confluence_url(_links.get('webui')) if _links else None
         )
 
         logfire.info("Página '{title}' (ID: {page_id}) creada exitosamente en espacio {space_key}.",
@@ -238,7 +315,7 @@ async def update_confluence_page_content(
             id=updated_page_data['id'],
             title=updated_page_data['title'],
             space_key=space_key_from_response,
-            link_web_ui=_links.get('webui') if _links else None
+            link_web_ui=_build_full_confluence_url(_links.get('webui')) if _links else None
         )
         logfire.info("Página ID {page_id} actualizada exitosamente a título '{title}'.",
                      page_id=updated_page.id, title=updated_page.title)

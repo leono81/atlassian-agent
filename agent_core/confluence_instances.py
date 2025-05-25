@@ -40,7 +40,7 @@ def get_confluence_client() -> Confluence:
                 if spaces_data and spaces_data.get('results'):
                     first_space_result = spaces_data['results'][0] # Acceder al primer elemento de la lista
                     logfire.info(
-                        "Cliente Confluence inicializado y conectado exitosamente. Primer espacio: {space_name}", 
+                        "Cliente Confluence inicializado y conectado exitosamente.", 
                         space_name=first_space_result.get('name')
                     )
                 else:
