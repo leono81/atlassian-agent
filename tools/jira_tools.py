@@ -26,6 +26,7 @@ class JiraIssueDetails(JiraIssue):
     description: Optional[str] = None
     created: Optional[str] = None
     updated: Optional[str] = None
+    story_points: Optional[int] = None  # Nuevo campo para story points
 
 class CreatedJiraIssue(BaseModel):
     key: str
@@ -216,6 +217,7 @@ async def get_issue_details(
             description=fields.get("description"), 
             created=fields.get("created"),
             updated=fields.get("updated"),
+            story_points=_extract_story_points(issue_data)  # Usar función existente para extraer story points
         )
         logfire.info("get_issue_details obtuvo detalles para {issue_key}", issue_key=issue_key)
         return details
@@ -807,6 +809,110 @@ async def validate_jira_user(
             requires_confirmation=False,
             confirmation_message=f"Error al buscar usuario '{user_identifier}': {str(e)}"
         )
+
+async def get_issue_story_points(
+    issue_key: str = Field(..., description="Clave del issue (ej. 'PROJ-123') para obtener sus Story Points")
+) -> Dict[str, Any]:
+    """
+    Obtiene los Story Points de un issue específico con información completa.
+    Incluye si los Story Points están completados (quemados) o pendientes según el estado del issue.
+    """
+    # Limpiar parámetros que pueden llegar como FieldInfo
+    issue_key = _clean_field_info_param(issue_key)
+    
+    if not issue_key or not isinstance(issue_key, str):
+        return {
+            "issue_key": str(issue_key) if issue_key else "vacío",
+            "story_points": None,
+            "found": False,
+            "message": "La clave del issue no puede estar vacía."
+        }
+    
+    logfire.info("Obteniendo Story Points para issue: {issue_key}", issue_key=issue_key)
+    
+    try:
+        jira = get_jira_client()
+        loop = asyncio.get_running_loop()
+        
+        # Obtener detalles del issue
+        with logfire.span("jira.get_issue_for_story_points", issue_key=issue_key):
+            issue_data = await loop.run_in_executor(None, jira.issue, issue_key)
+        
+        if not issue_data:
+            return {
+                "issue_key": issue_key,
+                "story_points": None,
+                "found": False,
+                "message": f"Issue {issue_key} no encontrado."
+            }
+        
+        # Extraer Story Points usando la función existente
+        story_points = _extract_story_points(issue_data)
+        
+        # Obtener información adicional del issue
+        fields = issue_data.get("fields", {})
+        issue_summary = fields.get("summary", "Sin resumen")
+        issue_type = fields.get("issuetype", {}).get("name", "Unknown")
+        issue_status = fields.get("status", {}).get("name", "Unknown")
+        assignee_info = fields.get("assignee")
+        assignee_name = assignee_info.get("displayName") if assignee_info else "Sin asignar"
+        
+        # Determinar si los Story Points están completados o pendientes
+        completed_statuses = ["done", "closed", "resolved", "complete", "finished"]
+        is_completed = issue_status.lower() in completed_statuses
+        
+        # Calcular Story Points quemados y pendientes
+        story_points_burned = story_points if (story_points and is_completed) else 0
+        story_points_pending = story_points if (story_points and not is_completed) else 0
+        
+        # Información de debug sobre qué campos se encontraron
+        debug_info = {}
+        story_points_fields = [
+            "customfield_10016", "customfield_10020", "customfield_10002", 
+            "customfield_10008", "storyPoints", "story_points"
+        ]
+        
+        for field_name in story_points_fields:
+            if field_name in fields:
+                debug_info[field_name] = fields[field_name]
+        
+        # Mensaje descriptivo
+        if story_points:
+            status_msg = "completados (quemados)" if is_completed else "pendientes"
+            points_msg = f"{story_points} Story Points {status_msg}"
+        else:
+            points_msg = "No tiene Story Points configurados"
+        
+        result = {
+            "issue_key": issue_key,
+            "issue_summary": issue_summary,
+            "issue_type": issue_type,
+            "issue_status": issue_status,
+            "assignee": assignee_name,
+            "story_points": story_points,
+            "story_points_burned": story_points_burned,
+            "story_points_pending": story_points_pending,
+            "is_completed": is_completed,
+            "found": story_points is not None,
+            "message": f"{issue_key}: {points_msg}",
+            "debug_fields_found": debug_info if debug_info else "Ningún campo de Story Points encontrado"
+        }
+        
+        logfire.info("get_issue_story_points para {issue_key}: {story_points} SP ({status})", 
+                     issue_key=issue_key, story_points=story_points, status="quemados" if is_completed else "pendientes")
+        return result
+        
+    except Exception as e:
+        logfire.error("Error en get_issue_story_points para {issue_key}: {error_message}", 
+                      issue_key=issue_key, error_message=str(e), exc_info=True)
+        return {
+            "issue_key": issue_key,
+            "story_points": None,
+            "story_points_burned": 0,
+            "story_points_pending": 0,
+            "found": False,
+            "message": f"Error al obtener Story Points: {str(e)}"
+        }
 
 async def get_all_worklog_hours_for_issue(
     issue_key: str = Field(..., description="Clave del issue (historia, tarea o subtarea), ej: 'PROJ-123'")

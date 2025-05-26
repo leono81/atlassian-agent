@@ -34,8 +34,10 @@
 -   [X] **Tarea 3.2**: Añadir herramientas de escritura a `confluence_tools.py` (ej. `create_page`).
     -   [X] Sub-Tarea 3.2.1: Tests unitarios.
 -   [X] **Tarea 3.3**: Refinar el prompt del sistema del agente para mejorar el razonamiento y la selección de herramientas.
--   [] **Tarea 3.4**: Mejorar el uso de memoria.
+-   [X] **Tarea 3.4**: Mejorar el uso de memoria.
 -   [] **Tarea 3.5**: Railways para mejor performance en las consultas de Jira.
+-   [X] **Tarea 3.6**: Manejo de estados de tareas e historias
+-   [] **Tarea 3.7**: Control de las Story Points
 
 ## Hito 4: Preparación A2A y Refinamientos
 

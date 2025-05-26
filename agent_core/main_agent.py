@@ -27,6 +27,8 @@ from tools.jira_tools import (
     get_issue_transitions as get_issue_transitions_tool_func,
     get_project_workflow_statuses as get_project_workflow_statuses_tool_func,
     transition_issue as transition_issue_tool_func,
+    # === NUEVA HERRAMIENTA DE STORY POINTS ===
+    get_issue_story_points as get_issue_story_points_tool_func,
 )
 from tools.confluence_tools import (
     search_confluence_pages as conf_search_pages_tool_func,
@@ -89,6 +91,9 @@ get_issue_transitions_tool = Tool(get_issue_transitions_tool_func)
 get_project_workflow_statuses_tool = Tool(get_project_workflow_statuses_tool_func)
 transition_issue_tool = Tool(transition_issue_tool_func)
 
+# === NUEVA HERRAMIENTA DE STORY POINTS ===
+get_issue_story_points_tool = Tool(get_issue_story_points_tool_func)
+
 # Lista de todas las herramientas para el agente
 available_tools = [
     jira_search_tool,
@@ -115,6 +120,7 @@ available_tools = [
     get_issue_transitions_tool,
     get_project_workflow_statuses_tool,
     transition_issue_tool,
+    get_issue_story_points_tool,
 ]
 
 # --- Creación del Agente Principal ---
