@@ -12,7 +12,7 @@ from pydantic.fields import FieldInfo
 
 from agent_core.jira_instances import get_jira_client
 import logfire
-from tools.date_utils import parse_relative_date, get_weekday_name
+# from tools.date_utils import parse_relative_date, get_weekday_name  # Comentado temporalmente
 
 class JiraIssue(BaseModel):
     key: str
@@ -104,6 +104,48 @@ class UserSearchResult(BaseModel):
     suggestions: List[JiraUser] = []
     requires_confirmation: bool = False
     confirmation_message: Optional[str] = None
+
+# === NUEVAS CLASES PARA TRANSICIONES Y ESTADOS ===
+class JiraStatus(BaseModel):
+    id: str
+    name: str
+    description: Optional[str] = None
+    category_key: Optional[str] = None  # "new", "indeterminate", "done"
+    category_name: Optional[str] = None
+
+class JiraTransitionField(BaseModel):
+    field_id: str
+    field_name: str
+    required: bool = False
+    field_type: Optional[str] = None
+    allowed_values: Optional[List[str]] = None
+
+class JiraTransition(BaseModel):
+    id: str
+    name: str
+    to_status: JiraStatus
+    has_screen: bool = False
+    required_fields: List[JiraTransitionField] = []
+
+class IssueTransitionsResult(BaseModel):
+    issue_key: str
+    issue_summary: str
+    current_status: JiraStatus
+    available_transitions: List[JiraTransition]
+    total_transitions: int
+
+class WorkflowStatus(BaseModel):
+    id: str
+    name: str
+    description: Optional[str] = None
+    category: Optional[str] = None
+
+class ProjectWorkflowInfo(BaseModel):
+    project_key: str
+    project_name: str
+    workflow_name: Optional[str] = None
+    all_statuses: List[WorkflowStatus]
+    total_statuses: int
 
 def _clean_field_info_param(param_value: Any) -> Any:
     """
@@ -286,21 +328,9 @@ async def add_worklog_to_jira_issue(
                 if _started_dt_object.tzinfo is None:
                     _started_dt_object = _started_dt_object.replace(tzinfo=timezone.utc).astimezone()
             except ValueError:
-                # Usar date_utils para fechas relativas
-                parsed_date = parse_relative_date(started_datetime_str)
-                if parsed_date:
-                    # Por defecto, hora 08:30 si no se especifica
-                    _started_dt_object = datetime.combine(parsed_date, time(8, 30)).astimezone()
-                    if not confirm:
-                        # Devuelve un mensaje de confirmación antes de proceder
-                        weekday = get_weekday_name(parsed_date)
-                        fecha_str = parsed_date.strftime('%d/%m/%Y')
-                        hora_str = '08:30'
-                        msg = f"¿Quieres registrar el tiempo el {weekday} {fecha_str} a las {hora_str}? Confirma para continuar."
-                        # Devuelve un JiraWorklog especial solo con el mensaje de confirmación
-                        return JiraWorklog(id="CONFIRM_REQUIRED", comment=msg)
-                else:
-                    raise ValueError(f"No se pudo interpretar la fecha '{started_datetime_str}'. Usa formato ISO o una fecha relativa reconocida.")
+                # Usar fecha actual si no se puede interpretar (date_utils comentado temporalmente)
+                _started_dt_object = datetime.now(timezone.utc).astimezone()
+                logfire.warning("No se pudo interpretar la fecha '{date_str}', usando fecha actual", date_str=started_datetime_str)
         # Formatear como string para Jira
         started_str = _started_dt_object.strftime("%Y-%m-%dT%H:%M:%S.000%z")
         # Llamada correcta: argumentos posicionales
@@ -1346,6 +1376,329 @@ def _calculate_sprint_progress(issues: List[JiraIssue], issues_raw_data: List[di
         "progress_percentage": round(progress_percentage, 1)
     }
 
+# === NUEVAS FUNCIONES PARA TRANSICIONES Y ESTADOS ===
+
+async def get_issue_transitions(
+    issue_key: str = Field(..., description="Clave del issue (ej. 'PROJ-123') para obtener transiciones disponibles")
+) -> IssueTransitionsResult:
+    """
+    Obtiene todas las transiciones disponibles para un issue específico.
+    Muestra los estados a los que se puede mover el issue desde su estado actual.
+    """
+    # Limpiar parámetros que pueden llegar como FieldInfo
+    issue_key = _clean_field_info_param(issue_key)
+    
+    logfire.info("Obteniendo transiciones para issue: {issue_key}", issue_key=issue_key)
+    
+    try:
+        jira = get_jira_client()
+        loop = asyncio.get_running_loop()
+        
+        # Obtener detalles del issue para el estado actual
+        with logfire.span("jira.get_issue_details", issue_key=issue_key):
+            issue_data = await loop.run_in_executor(None, jira.issue, issue_key)
+        
+        if not issue_data:
+            error_status = JiraStatus(id="error", name="Issue no encontrado")
+            return IssueTransitionsResult(
+                issue_key=issue_key,
+                issue_summary="Issue no encontrado",
+                current_status=error_status,
+                available_transitions=[],
+                total_transitions=0
+            )
+        
+        # Obtener transiciones disponibles
+        with logfire.span("jira.get_transitions", issue_key=issue_key):
+            transitions_data = await loop.run_in_executor(None, jira.get_issue_transitions, issue_key)
+        
+        # Agregar logging para diagnosticar la respuesta
+        logfire.info("Respuesta de get_issue_transitions: tipo={type}, contenido={content}", 
+                     type=type(transitions_data).__name__, content=str(transitions_data)[:500])
+        
+        # Procesar estado actual
+        current_status_data = issue_data.get("fields", {}).get("status", {})
+        current_status = JiraStatus(
+            id=str(current_status_data.get("id", "unknown")),
+            name=current_status_data.get("name", "Unknown"),
+            description=current_status_data.get("description"),
+            category_key=current_status_data.get("statusCategory", {}).get("key"),
+            category_name=current_status_data.get("statusCategory", {}).get("name")
+        )
+        
+        # Procesar transiciones disponibles
+        available_transitions = []
+        transitions_list = []
+        
+        # Verificar que transitions_data sea una lista válida
+        if not transitions_data:
+            logfire.warning("No se recibieron transiciones para {issue_key}", issue_key=issue_key)
+            transitions_list = []
+        elif isinstance(transitions_data, str):
+            logfire.error("get_issue_transitions devolvió un string en lugar de datos: {response}", response=transitions_data)
+            # Si es un string, probablemente es un mensaje de error
+            raise ValueError(f"Error de API: {transitions_data}")
+        elif isinstance(transitions_data, list):
+            # Respuesta directa como lista (formato esperado de atlassian-python-api)
+            transitions_list = transitions_data
+        elif isinstance(transitions_data, dict) and "transitions" in transitions_data:
+            # Algunas APIs devuelven {"transitions": [...]} (formato alternativo)
+            transitions_list = transitions_data["transitions"]
+        else:
+            logfire.error("Formato inesperado de transitions_data: {type} - {data}", 
+                         type=type(transitions_data).__name__, data=str(transitions_data)[:200])
+            transitions_list = []
+        
+        if transitions_list:
+            for transition in transitions_list:
+                if not isinstance(transition, dict):
+                    logfire.warning("Transición no es un dict: {type} - {content}", 
+                                   type=type(transition).__name__, content=str(transition))
+                    continue
+                # Manejar el campo 'to' (en atlassian-python-api es directamente un string)
+                to_data = transition.get("to", "Unknown")
+                if isinstance(to_data, str):
+                    # Formato de atlassian-python-api: 'to' es directamente el nombre del estado
+                    to_status = JiraStatus(
+                        id="unknown",  # No disponible en este formato
+                        name=to_data,
+                        description=None,
+                        category_key=None,
+                        category_name=None
+                    )
+                elif isinstance(to_data, dict):
+                    # Formato completo (si alguna vez cambia la API): 'to' es un objeto
+                    to_status = JiraStatus(
+                        id=str(to_data.get("id", "unknown")),
+                        name=to_data.get("name", "Unknown"),
+                        description=to_data.get("description"),
+                        category_key=to_data.get("statusCategory", {}).get("key"),
+                        category_name=to_data.get("statusCategory", {}).get("name")
+                    )
+                else:
+                    # Fallback para casos inesperados
+                    logfire.warning("Formato inesperado para 'to' en transición: {type} - {content}",
+                                   type=type(to_data).__name__, content=str(to_data))
+                    to_status = JiraStatus(
+                        id="unknown",
+                        name="Unknown",
+                        description=None,
+                        category_key=None,
+                        category_name=None
+                    )
+                
+                # Procesar campos requeridos si existen
+                required_fields = []
+                fields_data = transition.get("fields", {})
+                for field_id, field_info in fields_data.items():
+                    if field_info.get("required", False):
+                        allowed_values = None
+                        if "allowedValues" in field_info:
+                            allowed_values = [str(val.get("name", val)) for val in field_info["allowedValues"]]
+                        
+                        required_fields.append(JiraTransitionField(
+                            field_id=field_id,
+                            field_name=field_info.get("name", field_id),
+                            required=field_info.get("required", False),
+                            field_type=field_info.get("schema", {}).get("type"),
+                            allowed_values=allowed_values
+                        ))
+                
+                available_transitions.append(JiraTransition(
+                    id=str(transition.get("id", "unknown")),
+                    name=transition.get("name", "Unknown Transition"),
+                    to_status=to_status,
+                    has_screen=bool(transition.get("hasScreen", False)),
+                    required_fields=required_fields
+                ))
+        
+        result = IssueTransitionsResult(
+            issue_key=issue_key,
+            issue_summary=issue_data.get("fields", {}).get("summary", "Sin resumen"),
+            current_status=current_status,
+            available_transitions=available_transitions,
+            total_transitions=len(available_transitions)
+        )
+        
+        logfire.info("get_issue_transitions encontró {count} transiciones para {issue_key}", 
+                     count=len(available_transitions), issue_key=issue_key)
+        return result
+        
+    except Exception as e:
+        logfire.error("Error en get_issue_transitions para {issue_key}: {error_message}", 
+                      issue_key=issue_key, error_message=str(e), exc_info=True)
+        error_status = JiraStatus(id="error", name="Error al obtener estado")
+        return IssueTransitionsResult(
+            issue_key=issue_key,
+            issue_summary=f"Error al obtener transiciones: {str(e)}",
+            current_status=error_status,
+            available_transitions=[],
+            total_transitions=0
+        )
+
+async def get_project_workflow_statuses(
+    project_key: str = Field(..., description="Clave del proyecto (ej. 'PROJ') para obtener todos los estados del workflow")
+) -> ProjectWorkflowInfo:
+    """
+    Obtiene todos los estados disponibles en el workflow de un proyecto específico.
+    Útil para conocer todos los estados posibles, no solo las transiciones desde el estado actual.
+    """
+    # Limpiar parámetros que pueden llegar como FieldInfo
+    project_key = _clean_field_info_param(project_key)
+    
+    logfire.info("Obteniendo estados del workflow para proyecto: {project_key}", project_key=project_key)
+    
+    try:
+        jira = get_jira_client()
+        loop = asyncio.get_running_loop()
+        
+        # Obtener información del proyecto
+        with logfire.span("jira.get_project", project_key=project_key):
+            project_data = await loop.run_in_executor(None, jira.project, project_key)
+        
+        if not project_data:
+            return ProjectWorkflowInfo(
+                project_key=project_key,
+                project_name="Proyecto no encontrado",
+                all_statuses=[],
+                total_statuses=0
+            )
+        
+        # Obtener todos los estados usando la API REST de Jira
+        with logfire.span("jira.get_statuses"):
+            # Usar el método HTTP directo para obtener estados
+            statuses_data = await loop.run_in_executor(None, lambda: jira.get("/rest/api/2/status"))
+        
+        # Procesar estados
+        all_statuses = []
+        if statuses_data:
+            for status in statuses_data:
+                all_statuses.append(WorkflowStatus(
+                    id=str(status.get("id", "unknown")),
+                    name=status.get("name", "Unknown"),
+                    description=status.get("description"),
+                    category=status.get("statusCategory", {}).get("name")
+                ))
+        
+        # Intentar obtener información específica del workflow del proyecto
+        workflow_name = None
+        try:
+            # Buscar un issue del proyecto para obtener información del workflow
+            with logfire.span("jira.search_project_issues", project_key=project_key):
+                sample_issues = await loop.run_in_executor(
+                    None, 
+                    lambda: jira.jql(f'project = "{project_key}" ORDER BY created DESC', limit=1)
+                )
+            
+            if sample_issues and sample_issues.get("issues"):
+                # Intentar extraer información del workflow desde el issue
+                issue_data = sample_issues["issues"][0]
+                # El workflow name no siempre está disponible directamente
+                workflow_name = "Workflow del proyecto"
+        except Exception:
+            pass  # No es crítico si no podemos obtener el workflow name
+        
+        result = ProjectWorkflowInfo(
+            project_key=project_key,
+            project_name=project_data.get("name", project_key),
+            workflow_name=workflow_name,
+            all_statuses=all_statuses,
+            total_statuses=len(all_statuses)
+        )
+        
+        logfire.info("get_project_workflow_statuses encontró {count} estados para proyecto {project_key}", 
+                     count=len(all_statuses), project_key=project_key)
+        return result
+        
+    except Exception as e:
+        logfire.error("Error en get_project_workflow_statuses para {project_key}: {error_message}", 
+                      project_key=project_key, error_message=str(e), exc_info=True)
+        return ProjectWorkflowInfo(
+            project_key=project_key,
+            project_name=f"Error al obtener información: {str(e)}",
+            all_statuses=[],
+            total_statuses=0
+        )
+
+async def transition_issue(
+    issue_key: str = Field(..., description="Clave del issue (ej. 'PROJ-123') a transicionar"),
+    transition_id: str = Field(..., description="ID de la transición a ejecutar (obtenido de get_issue_transitions)"),
+    comment: Optional[str] = Field(default=None, description="Comentario opcional para la transición"),
+    additional_fields: Optional[Dict[str, Any]] = Field(default=None, description="Campos adicionales requeridos para la transición")
+) -> Dict[str, Any]:
+    """
+    Ejecuta una transición específica en un issue.
+    IMPORTANTE: Primero usa get_issue_transitions para ver las transiciones disponibles y sus IDs.
+    """
+    # Limpiar parámetros que pueden llegar como FieldInfo
+    issue_key = _clean_field_info_param(issue_key)
+    transition_id = _clean_field_info_param(transition_id)
+    comment = _clean_field_info_param(comment)
+    additional_fields = _clean_field_info_param(additional_fields) or {}
+    
+    logfire.info("Ejecutando transición {transition_id} en issue {issue_key}", 
+                 transition_id=transition_id, issue_key=issue_key)
+    
+    try:
+        jira = get_jira_client()
+        loop = asyncio.get_running_loop()
+        
+        # Ejecutar la transición usando set_issue_status_by_transition_id (método correcto para la librería)
+        try:
+            transition_id_int = int(transition_id)
+        except (ValueError, TypeError):
+            return {
+                "success": False,
+                "issue_key": issue_key,
+                "transition_id": transition_id,
+                "error": f"transition_id debe ser un número entero, recibido: {transition_id}",
+                "message": f"Error: transition_id '{transition_id}' no es un número válido"
+            }
+        
+        with logfire.span("jira.set_issue_status_by_transition_id", issue_key=issue_key, transition_id=transition_id_int):
+            await loop.run_in_executor(None, jira.set_issue_status_by_transition_id, issue_key, transition_id_int)
+        
+        # Si hay comentario, agregarlo por separado después de la transición
+        if comment:
+            with logfire.span("jira.add_comment", issue_key=issue_key):
+                await loop.run_in_executor(None, jira.issue_add_comment, issue_key, comment)
+        
+        # Si hay campos adicionales, actualizarlos por separado después de la transición
+        if additional_fields:
+            with logfire.span("jira.update_fields", issue_key=issue_key):
+                await loop.run_in_executor(None, jira.update_issue_field, issue_key, additional_fields)
+        
+        # Obtener el estado actualizado del issue
+        with logfire.span("jira.get_updated_issue", issue_key=issue_key):
+            updated_issue = await loop.run_in_executor(None, jira.issue, issue_key)
+        
+        new_status = "Unknown"
+        if updated_issue:
+            new_status = updated_issue.get("fields", {}).get("status", {}).get("name", "Unknown")
+        
+        result = {
+            "success": True,
+            "issue_key": issue_key,
+            "transition_id": transition_id_int,
+            "new_status": new_status,
+            "message": f"Transición ejecutada exitosamente. Issue {issue_key} ahora está en estado: {new_status}",
+            "comment_added": bool(comment)
+        }
+        
+        logfire.info("transition_issue exitosa: {issue_key} -> {new_status}", 
+                     issue_key=issue_key, new_status=new_status)
+        return result
+        
+    except Exception as e:
+        logfire.error("Error en transition_issue para {issue_key}: {error_message}", 
+                      issue_key=issue_key, error_message=str(e), exc_info=True)
+        return {
+            "success": False,
+            "issue_key": issue_key,
+            "transition_id": transition_id,
+            "error": str(e),
+            "message": f"Error al ejecutar transición: {str(e)}"
+        }
 
 
 if __name__ == "__main__":

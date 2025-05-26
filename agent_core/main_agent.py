@@ -23,6 +23,10 @@ from tools.jira_tools import (
     get_active_sprint_issues as get_active_sprint_issues_tool_func,
     get_my_current_sprint_work as get_my_current_sprint_work_tool_func,
     get_sprint_progress as get_sprint_progress_tool_func,
+    # === NUEVAS HERRAMIENTAS DE TRANSICIONES Y ESTADOS ===
+    get_issue_transitions as get_issue_transitions_tool_func,
+    get_project_workflow_statuses as get_project_workflow_statuses_tool_func,
+    transition_issue as transition_issue_tool_func,
 )
 from tools.confluence_tools import (
     search_confluence_pages as conf_search_pages_tool_func,
@@ -80,6 +84,11 @@ get_active_sprint_issues_tool = Tool(get_active_sprint_issues_tool_func)
 get_my_current_sprint_work_tool = Tool(get_my_current_sprint_work_tool_func)
 get_sprint_progress_tool = Tool(get_sprint_progress_tool_func)
 
+# === NUEVAS HERRAMIENTAS DE TRANSICIONES Y ESTADOS ===
+get_issue_transitions_tool = Tool(get_issue_transitions_tool_func)
+get_project_workflow_statuses_tool = Tool(get_project_workflow_statuses_tool_func)
+transition_issue_tool = Tool(transition_issue_tool_func)
+
 # Lista de todas las herramientas para el agente
 available_tools = [
     jira_search_tool,
@@ -103,6 +112,9 @@ available_tools = [
     get_active_sprint_issues_tool,
     get_my_current_sprint_work_tool,
     get_sprint_progress_tool,
+    get_issue_transitions_tool,
+    get_project_workflow_statuses_tool,
+    transition_issue_tool,
 ]
 
 # --- Creación del Agente Principal ---
@@ -221,6 +233,44 @@ main_agent = Agent(
         '- Puedes obtener el trabajo específico del usuario en el sprint activo con get_my_current_sprint_work (ideal para "¿cuál es mi trabajo del sprint?").\n'
         '- Puedes analizar el progreso completo del sprint con métricas detalladas usando get_sprint_progress (ideal para "¿cómo va el progreso del sprint?", incluye story points, porcentaje completado, días restantes).\n'
         '- Todas estas herramientas pueden filtrar por proyecto específico si se proporciona la clave del proyecto.\n'
+        '\n'
+        '***NUEVAS CAPACIDADES DE TRANSICIONES Y ESTADOS***:\n'
+        '- Puedes consultar los estados disponibles para cualquier issue con get_issue_transitions (ideal para "¿a qué estados puedo mover esta historia?", "¿qué transiciones están disponibles para PROJ-123?").\n'
+        '- Puedes obtener todos los estados del workflow de un proyecto con get_project_workflow_statuses (ideal para "¿cuáles son todos los estados posibles en este proyecto?").\n'
+        '- Puedes ejecutar transiciones de estado en issues con transition_issue (ideal para "mueve esta historia a En Progreso", "cambia el estado de esta tarea a Done").\n'
+        '- IMPORTANTE para transiciones: Siempre usa get_issue_transitions PRIMERO para obtener los IDs de transición disponibles antes de usar transition_issue.\n'
+        '- Las transiciones pueden requerir campos adicionales - get_issue_transitions te mostrará qué campos son obligatorios.\n'
+        '- Puedes agregar comentarios automáticamente al ejecutar transiciones.\n'
+        '\n'
+        '***FORMATO OBLIGATORIO para mostrar transiciones disponibles***:\n'
+        'SIEMPRE usa este formato exacto en Markdown:\n'
+        '\n'
+        '**Estado actual:** Estado Actual del Issue\n'
+        '\n'
+        '**Transiciones disponibles:**\n'
+        '1. **NOMBRE-DE-LA-TRANSICIÓN** (ID: transition_id)\n'
+        '   - **Estado destino:** Estado Final\n'
+        '   - **Requiere pantalla:** Sí/No\n'
+        '   - **Campos requeridos:** Lista de campos obligatorios (si los hay)\n'
+        '\n'
+        '2. **OTRA-TRANSICIÓN** (ID: otro_id)\n'
+        '   - **Estado destino:** Otro Estado\n'
+        '   - **Requiere pantalla:** No\n'
+        '   - **Campos requeridos:** Ninguno\n'
+        '\n'
+        'EJEMPLO REAL:\n'
+        '**Estado actual:** To Do\n'
+        '\n'
+        '**Transiciones disponibles:**\n'
+        '1. **Start Progress** (ID: 21)\n'
+        '   - **Estado destino:** In Progress\n'
+        '   - **Requiere pantalla:** No\n'
+        '   - **Campos requeridos:** Ninguno\n'
+        '\n'
+        '2. **Done** (ID: 31)\n'
+        '   - **Estado destino:** Done\n'
+        '   - **Requiere pantalla:** Sí\n'
+        '   - **Campos requeridos:** Resolution\n'
         '\n'
         #'Antes de realizar acciones que modifiquen datos (crear, actualizar, comentar), confirma con el usuario si es apropiado, a menos que la solicitud sea muy explícita.'
     ),
