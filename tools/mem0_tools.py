@@ -183,14 +183,19 @@ async def search_memory(
                 logfire.warn(f"Metadata for memory {mem_item.get('id')} is not a dict, skipping. Meta: {meta}")
                 meta = {}
             
-            parsed_results_list.append(MemoryResult(
-                memory_id=str(mem_item.get("id", "")),
-                alias=str(meta.get("alias", "")),
-                value=str(meta.get("value", "")),
-                type=str(meta.get("type")) if meta.get("type") is not None else None,
-                context=str(meta.get("context")) if meta.get("context") is not None else None,
-                extra={k: v for k, v in meta.items() if k not in {"alias", "value", "type", "context"}}
-            ))
+            alias_val = meta.get("alias")
+            value_val = meta.get("value")
+
+            # Only proceed if both alias and value are present and not empty
+            if alias_val and value_val:
+                parsed_results_list.append(MemoryResult(
+                    memory_id=str(mem_item.get("id", "")),
+                    alias=str(alias_val),
+                    value=str(value_val),
+                    type=str(meta.get("type")) if meta.get("type") is not None else None,
+                    context=str(meta.get("context")) if meta.get("context") is not None else None,
+                    extra={k: v for k, v in meta.items() if k not in {"alias", "value", "type", "context"}}
+                ))
         return SearchMemoryResponse(results=parsed_results_list, status="ok")
     except Exception as e:
         logfire.error(f"Error during mem0_client.search or processing its results: {e}", exc_info=True)
@@ -324,16 +329,21 @@ async def precargar_memoria_completa_usuario(limit: int = 100) -> SearchMemoryRe
                     if not isinstance(meta, dict): 
                         meta = {}
                     
-                    parsed_results_list.append(MemoryResult(
-                        memory_id=str(mem_item.get("id", "")),
-                        alias=str(meta.get("alias", "")),
-                        value=str(meta.get("value", "")),
-                        type=str(meta.get("type")) if meta.get("type") is not None else None,
-                        context=str(meta.get("context")) if meta.get("context") is not None else None,
-                        extra={k: v for k, v in meta.items() if k not in {"alias", "value", "type", "context"}}
-                    ))
+                    alias_val = meta.get("alias")
+                    value_val = meta.get("value")
+
+                    # Only proceed if both alias and value are present and not empty
+                    if alias_val and value_val:
+                        parsed_results_list.append(MemoryResult(
+                            memory_id=str(mem_item.get("id", "")),
+                            alias=str(alias_val),
+                            value=str(value_val),
+                            type=str(meta.get("type")) if meta.get("type") is not None else None,
+                            context=str(meta.get("context")) if meta.get("context") is not None else None,
+                            extra={k: v for k, v in meta.items() if k not in {"alias", "value", "type", "context"}}
+                        ))
                 
-                logfire.info(f"precargar_memoria_completa_usuario: Cargados {len(parsed_results_list)} alias para el usuario.")
+                logfire.info(f"precargar_memoria_completa_usuario: Cargados {len(parsed_results_list)} alias válidos para el usuario.")
                 return SearchMemoryResponse(results=parsed_results_list, status="ok")
                 
             except Exception as query_error:

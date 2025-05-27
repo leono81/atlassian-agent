@@ -1,4 +1,4 @@
-from pydantic import BaseModel, HttpUrl, Field
+from pydantic import BaseModel, HttpUrl, Field, ConfigDict
 from typing import List, Optional, Union
 
 # --- Jira Issue Models ---
@@ -48,13 +48,14 @@ class JiraUserItem(BaseModel):
     account_id: str = Field(..., description="The unique account ID of the Jira user.")
     active: bool = Field(..., description="Indicates whether the user account is active.")
 
-    class Config:
-        allow_population_by_field_name = True
+    model_config = ConfigDict(validate_by_name=True)
 
 class JiraUserListOutput(BaseModel):
     users: List[JiraUserItem] = Field(..., description="A list of Jira users found.")
     exact_match_found: Optional[bool] = Field(False, description="Indicates if an exact match was found among the results (primarily for validate_jira_user).")
     message: Optional[str] = Field(None, description="An optional message, e.g., 'No users found' or 'Multiple users found, please specify.'")
+
+    model_config = ConfigDict(validate_by_name=True)
 
 
 # --- Jira Issue Transition Models ---
@@ -71,8 +72,7 @@ class JiraIssueTransitionItem(BaseModel):
     has_screen: bool = Field(False, description="Indicates if the transition has an associated screen for additional input.")
     required_fields: List[JiraIssueTransitionField] = Field([], description="A list of fields that are required for this transition, if any.")
 
-    class Config:
-        allow_population_by_field_name = True
+    model_config = ConfigDict(validate_by_name=True)
 
 class JiraIssueTransitionsOutput(BaseModel):
     issue_key: str = Field(..., description="The key of the issue for which transitions are listed.")
