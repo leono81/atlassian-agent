@@ -17,7 +17,7 @@ CONFLUENCE_API_TOKEN = os.getenv("CONFLUENCE_API_TOKEN")
 LOGFIRE_TOKEN = os.getenv("LOGFIRE_TOKEN")
 
 # PydanticAI Model (opcional, puedes definirlo directamente en el agente)
-PYDANTIC_AI_MODEL = os.getenv("PYDANTIC_AI_MODEL", "openai:gpt-4.1-nano") # Default model
+PYDANTIC_AI_MODEL = os.getenv("PYDANTIC_AI_MODEL", "openai:gpt-4.1-mini") # Default model
 
 # Timezone Configuration
 TIMEZONE = os.getenv("TIMEZONE", "UTC")
