@@ -13,3 +13,6 @@ env/
 *.egg-info/
 dist/
 build/
+
+# Streamlit secrets - NUNCA subir a git
+.streamlit/secrets.toml

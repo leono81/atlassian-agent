@@ -5,8 +5,35 @@ from pydantic.fields import FieldInfo
 from mem0 import MemoryClient
 import logfire
 
-# User ID fijo para todas las interacciones con Mem0
-USER_ID_FIJO = "atlassian_agent_user_001" # Puedes cambiar este valor si lo deseas
+# User ID dinámico - se obtiene del usuario autenticado
+# Fallback para compatibilidad con versiones anteriores
+DEFAULT_USER_ID = "atlassian_agent_user_001"
+
+def get_current_user_id() -> str:
+    """
+    Obtiene el ID del usuario actual desde Streamlit session state.
+    Si no hay usuario autenticado, usa el ID por defecto.
+    """
+    import streamlit as st
+    
+    # Prioridad 1: Usuario autenticado con Streamlit native auth (verificación segura)
+    try:
+        if hasattr(st, 'user') and hasattr(st.user, 'is_logged_in') and st.user.is_logged_in:
+            return getattr(st.user, 'email', DEFAULT_USER_ID)
+    except (AttributeError, KeyError):
+        # La autenticación nativa no está disponible o configurada
+        pass
+    
+    # Prioridad 2: Usuario en session_state (para otros sistemas de auth)
+    if 'user_email' in st.session_state:
+        return st.session_state.user_email
+    
+    # Prioridad 3: Username en session_state (compatibilidad)
+    if 'username' in st.session_state:
+        return st.session_state.username
+    
+    # Fallback: Usuario por defecto
+    return DEFAULT_USER_ID
 
 # Configuración: obtener la API key de Mem0 desde el entorno
 MEM0_API_KEY = os.getenv("MEM0_API_KEY")
@@ -19,7 +46,7 @@ mem0_client = None
 if MEM0_API_KEY:
     try:
         mem0_client = MemoryClient(api_key=MEM0_API_KEY)
-        logfire.info(f"Mem0 Client initialized with MEM0_API_KEY for user {USER_ID_FIJO}.")
+        logfire.info(f"Mem0 Client initialized with MEM0_API_KEY.")
     except Exception as e:
         logfire.error(f"Error initializing Mem0 Client with MEM0_API_KEY: {e}", exc_info=True)
         mem0_client = None
@@ -27,7 +54,7 @@ elif OPENAI_API_KEY: # If MEM0_API_KEY is not present, but OPENAI_API_KEY is, tr
     try:
         logfire.info("MEM0_API_KEY not found. Attempting to initialize Mem0 Client (e.g. with OpenAI API key for local/dev)...")
         mem0_client = MemoryClient() # Assuming it can pick up OPENAI_API_KEY from env or has other fallbacks
-        logfire.info(f"Mem0 Client initialized (fallback) for user {USER_ID_FIJO}. Note: Full functionality may depend on Mem0 service connection.")
+        logfire.info(f"Mem0 Client initialized (fallback). Note: Full functionality may depend on Mem0 service connection.")
     except Exception as e:
         logfire.error(f"Error initializing Mem0 Client with fallback: {e}", exc_info=True)
         mem0_client = None
@@ -91,9 +118,12 @@ async def save_memory(
     content_str = f"{alias} => {value}" if _context_val is None else f"{alias} => {value} ({_context_val})"
     
     try:
+        current_user_id = get_current_user_id()
+        logfire.debug(f"Saving memory for user: {current_user_id}")
+        
         result = mem0_client.add(
             [{"role": "user", "content": content_str}],
-            user_id=USER_ID_FIJO,
+            user_id=current_user_id,
             metadata=metadata
         )
         logfire.debug(f"Mem0 client.add() raw result: {result}")
@@ -162,7 +192,10 @@ async def search_memory(
             resolved_limit = 3
             
     try:
-        result = mem0_client.search(query=search_query_text, user_id=USER_ID_FIJO, filters=filters, limit=resolved_limit)
+        current_user_id = get_current_user_id()
+        logfire.debug(f"Searching memory for user: {current_user_id}")
+        
+        result = mem0_client.search(query=search_query_text, user_id=current_user_id, filters=filters, limit=resolved_limit)
         logfire.debug(f"Mem0 client.search() raw result: {result}")
         
         parsed_results_list = []
@@ -211,7 +244,8 @@ if __name__ == "__main__":
 
     async def main():
         print(f"--- Mem0 Tools Test Script ---")
-        print(f"Using fixed User ID: {USER_ID_FIJO}")
+        print(f"Default User ID: {DEFAULT_USER_ID}")
+        print(f"Current User ID: {get_current_user_id()}")
         print(f"MEM0_API_KEY found: {bool(MEM0_API_KEY)}")
         print(f"OPENAI_API_KEY found: {bool(OPENAI_API_KEY)}")
         print(f"mem0_client initialized: {bool(mem0_client)}")
@@ -244,7 +278,7 @@ if __name__ == "__main__":
         print(f"SaveMemoryResponse (required only): {save_resp_req}")
 
         if saved_memory_id and saved_memory_id != "ERROR":
-            print(f"\n--- Searching for saved memory (ID: {saved_memory_id}) using various criteria for user {USER_ID_FIJO} ---")
+            print(f"\n--- Searching for saved memory (ID: {saved_memory_id}) using various criteria for user {get_current_user_id()} ---")
 
             print("\nTest 3.1: Search by alias...")
             search_alias_resp = await search_memory(alias=test_alias, limit=1)
@@ -305,9 +339,12 @@ async def precargar_memoria_completa_usuario(limit: int = 100) -> SearchMemoryRe
         
         for query_attempt in queries_to_try:
             try:
+                current_user_id = get_current_user_id()
+                logfire.debug(f"Preloading memory for user: {current_user_id}")
+                
                 result = mem0_client.search(
                     query=query_attempt, 
-                    user_id=USER_ID_FIJO, 
+                    user_id=current_user_id, 
                     filters={}, 
                     limit=limit
                 )

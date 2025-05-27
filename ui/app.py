@@ -8,6 +8,7 @@ from pydantic_ai.messages import UserPromptPart, TextPart, ModelMessage # Para e
 from typing import List, Dict
 from tools.mem0_tools import search_memory, save_memory, precargar_memoria_completa_usuario
 from datetime import datetime
+from ui.custom_styles import apply_custom_title_styles, render_custom_title
 
 # Configurar Logfire
 logfire.configure(
@@ -27,6 +28,103 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# --- SISTEMA DE AUTENTICACIÓN ---
+def check_authentication():
+    """
+    Verifica si el usuario está autenticado y maneja el flujo de login.
+    Retorna True si está autenticado, False si no.
+    """
+    # Verificar si la autenticación nativa está disponible y configurada
+    try:
+        # Intentar acceder a st.user de forma segura
+        if hasattr(st, 'user') and hasattr(st.user, 'is_logged_in') and st.user.is_logged_in:
+            return True
+    except (AttributeError, KeyError) as e:
+        # La autenticación nativa no está configurada o disponible
+        # Mostrar mensaje informativo y permitir acceso sin autenticación
+        st.info("ℹ️ **Modo sin autenticación**: La autenticación OAuth2 no está configurada. "
+                "La aplicación funcionará con un usuario por defecto.")
+        
+        with st.expander("🔧 ¿Quieres configurar autenticación multi-usuario?"):
+            st.markdown("""
+            **Para habilitar autenticación con Google:**
+            
+            1. 📋 Sigue la guía: `SETUP_OAUTH.md`
+            2. 🔑 Configura: `.streamlit/secrets.toml`
+            3. ✅ Verifica: `python verify_auth_setup.py`
+            4. 🚀 Reinicia la aplicación
+            
+            **Beneficios de la autenticación:**
+            - 👥 Múltiples usuarios
+            - 🔒 Datos privados por usuario
+            - 🧠 Memoria personalizada
+            - 🔐 Acceso seguro
+            """)
+        
+        # Permitir continuar sin autenticación
+        return True
+    
+    # Si llegamos aquí, la autenticación está disponible pero el usuario no está logueado
+    st.markdown("# 🔐 Acceso al Agente Atlassian")
+    st.markdown("---")
+    
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.markdown("""
+        ### Bienvenido al Agente Atlassian
+        
+        Para acceder a la aplicación, necesitas autenticarte con tu cuenta de Google.
+        
+        **Características:**
+        - 🤖 Agente inteligente para Jira y Confluence
+        - 🧠 Memoria personalizada con tus alias y configuraciones
+        - 🔒 Datos seguros y privados por usuario
+        - 📊 Historial de conversaciones persistente
+        """)
+        
+        st.markdown("---")
+        
+        # Botón de login centrado
+        if st.button("🚀 Iniciar Sesión con Google", 
+                    use_container_width=True, 
+                    type="primary"):
+            try:
+                st.login()
+            except Exception as e:
+                st.error(f"Error durante el login: {e}")
+                st.info("💡 **Posibles soluciones:**\n"
+                       "- Verifica que hayas configurado correctamente Google OAuth2\n"
+                       "- Revisa el archivo `.streamlit/secrets.toml`\n"
+                       "- Consulta `SETUP_OAUTH.md` para más detalles")
+        
+        st.markdown("---")
+        st.caption("🔒 Tu privacidad es importante. Solo accedemos a tu email para identificarte.")
+    
+    return False
+
+# Verificar autenticación antes de mostrar la app
+if not check_authentication():
+    st.stop()  # Detener ejecución si no está autenticado
+
+# Usuario autenticado - continuar con la aplicación
+def get_user_info():
+    """Obtiene información del usuario de forma segura."""
+    try:
+        if hasattr(st, 'user') and hasattr(st.user, 'is_logged_in') and st.user.is_logged_in:
+            email = getattr(st.user, 'email', 'usuario_autenticado')
+            name = getattr(st.user, 'name', email)
+            return email, name
+    except (AttributeError, KeyError):
+        pass
+    
+    # Fallback para modo sin autenticación
+    return "atlassian_agent_user_001", "Usuario Demo"
+
+current_user, user_name = get_user_info()
+
+# Aplicar estilos personalizados para títulos
+apply_custom_title_styles()
 
 # CSS personalizado para mejorar la apariencia
 st.markdown("""
@@ -115,25 +213,32 @@ def guardar_nuevo_alias(alias, value):
     loop.run_until_complete(save_memory(alias=alias, value=value))
     loop.close()
 
+def generar_contexto_completo():
+    """Genera un string con información del usuario y memoria para pasarla como contexto al agente."""
+    contexto_partes = []
+    
+    # 1. Información del usuario
+    contexto_partes.append(f"USUARIO: {user_name} (email: {current_user})")
+    
+    # 2. Memoria del usuario (si está activa)
+    if st.session_state.get("usar_contexto_memoria", True):
+        memoria = st.session_state.get("memoria_usuario", {})
+        if memoria:
+            max_alias = 10
+            memoria_items = list(memoria.items())[:max_alias]
+            alias_lines = [f"'{alias}' → {value}" for alias, value in memoria_items]
+            
+            total_alias = len(memoria)
+            if total_alias > max_alias:
+                alias_lines.append(f"... y {total_alias - max_alias} alias más en memoria")
+            
+            contexto_partes.append(f"MEMORIA: {', '.join(alias_lines)}")
+    
+    return "\n".join(contexto_partes) if contexto_partes else ""
+
 def generar_contexto_memoria():
-    """Genera un string con la memoria precargada para pasarla como contexto al agente."""
-    if not st.session_state.get("usar_contexto_memoria", True):
-        return ""
-    
-    memoria = st.session_state.get("memoria_usuario", {})
-    if not memoria:
-        return ""
-    
-    max_alias = 10
-    memoria_items = list(memoria.items())[:max_alias]
-    alias_lines = [f"'{alias}' → {value}" for alias, value in memoria_items]
-    
-    total_alias = len(memoria)
-    if total_alias > max_alias:
-        alias_lines.append(f"... y {total_alias - max_alias} alias más en memoria")
-    
-    contexto = f"MEMORIA: {', '.join(alias_lines)}"
-    return contexto
+    """Función legacy - mantener para compatibilidad."""
+    return generar_contexto_completo()
 
 # --- INICIALIZACIÓN DEL ESTADO ---
 if "pydantic_ai_messages" not in st.session_state:
@@ -152,8 +257,11 @@ if "usar_contexto_memoria" not in st.session_state:
 precargar_memoria_usuario()
 
 # --- INTERFAZ PRINCIPAL DEL CHAT ---
+# Título personalizado con nombre del usuario usando estilos personalizados
+render_custom_title(f"Agente Atlassian", "app", "🤖")
+st.markdown(f"### Hola {user_name.split()[0]}!")
 # Container para mensajes con altura aumentada y scroll
-chat_container = st.container(height=700, border=True)
+chat_container = st.container(height=600, border=True)
 with chat_container:
     for message in st.session_state.chat_history:
         if message["role"] == "user":
@@ -168,13 +276,13 @@ if prompt := st.chat_input("💬 Escribe tu consulta aquí...", key="main_chat")
     # Agregar mensaje del usuario al historial
     st.session_state.chat_history.append({"role": "user", "content": prompt})
     
-    # Generar contexto de memoria si está activo
-    contexto_memoria = generar_contexto_memoria()
-    prompt_con_contexto = f"{contexto_memoria}\n\n{prompt}" if contexto_memoria else prompt
+    # Generar contexto completo (usuario + memoria)
+    contexto_completo = generar_contexto_completo()
+    prompt_con_contexto = f"{contexto_completo}\n\n{prompt}" if contexto_completo else prompt
     
     # Procesar respuesta del agente
     try:
-        with st.status("🤖 Procesando tu consulta...", expanded=False) as status:
+        with st.status("🤖 Procesando tu consulta...", expanded=True) as status:
             st.write("🔍 Consultando memoria...")
             st.write("🔧 Ejecutando herramientas...")
             
@@ -205,6 +313,26 @@ if prompt := st.chat_input("💬 Escribe tu consulta aquí...", key="main_chat")
     st.rerun()
 
 # --- SIDEBAR ---
+# Información del usuario autenticado
+st.sidebar.markdown("### 👤 Usuario")
+st.sidebar.markdown(f"**{user_name}**")
+st.sidebar.markdown(f"📧 `{current_user}`")
+
+# Botón de logout (solo si la autenticación está disponible)
+try:
+    # Verificar si la autenticación está disponible antes de mostrar logout
+    if hasattr(st, 'user') and hasattr(st.user, 'is_logged_in') and st.user.is_logged_in:
+        if st.sidebar.button("🚪 Cerrar Sesión", use_container_width=True):
+            st.logout()
+    else:
+        # En modo sin autenticación, mostrar información en lugar del botón
+        st.sidebar.info("🔓 **Modo sin autenticación**\n\nPara habilitar login/logout, configura OAuth2 siguiendo `SETUP_OAUTH.md`")
+except (AttributeError, KeyError):
+    # La autenticación no está disponible
+    st.sidebar.info("🔓 **Modo sin autenticación**\n\nPara habilitar login/logout, configura OAuth2 siguiendo `SETUP_OAUTH.md`")
+
+st.sidebar.markdown("---")
+
 # Mostrar fecha actual
 fecha_actual = datetime.now().strftime("%d de %B, %Y")
 st.sidebar.markdown(f'<div class="fecha-sidebar">📅 {fecha_actual}</div>', unsafe_allow_html=True)
@@ -230,19 +358,19 @@ st.sidebar.markdown("---")
 memoria_usuario = st.session_state.get("memoria_usuario", {})
 cantidad_alias = len(memoria_usuario)
 
-# Toggle para activar/desactivar contexto de memoria
+# Toggle para activar/desactivar contexto completo
 contexto_activo = st.sidebar.toggle(
-    "🧠 Usar contexto de memoria", 
+    "🧠 Usar contexto completo", 
     value=st.session_state.usar_contexto_memoria,
-    help="Cuando está activo, el agente conoce automáticamente tus alias sin buscar en memoria."
+    help="Cuando está activo, el agente conoce tu nombre, email y alias automáticamente sin buscar en memoria."
 )
 st.session_state.usar_contexto_memoria = contexto_activo
 
 # Indicador visual del estado
 if contexto_activo and cantidad_alias > 0:
-    st.sidebar.success(f"✅ Contexto activo ({cantidad_alias} alias cargados)")
+    st.sidebar.success(f"✅ Contexto activo: usuario + {cantidad_alias} alias")
 elif contexto_activo and cantidad_alias == 0:
-    st.sidebar.warning("⚠️ Contexto activo pero sin alias")
+    st.sidebar.success("✅ Contexto activo: usuario (sin alias)")
 else:
     st.sidebar.info("ℹ️ Contexto desactivado - el agente usará search_memory")
 
