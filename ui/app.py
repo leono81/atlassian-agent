@@ -30,6 +30,11 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# Meta viewport para responsividad móvil
+st.markdown("""
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+""", unsafe_allow_html=True)
+
 # --- SISTEMA DE AUTENTICACIÓN ---
 def check_authentication():
     """
@@ -192,6 +197,235 @@ st.markdown("""
         border-radius: 6px;
         margin-bottom: 12px;
     }
+    
+    /* ========================================
+       RESPONSIVE DESIGN - MEDIA QUERIES
+       ======================================== */
+    
+    /* Mobile First - Base styles para móvil */
+    @media (max-width: 767px) {
+        /* Sidebar más compacto en móvil */
+        div[data-testid="stSidebar"] {
+            width: 280px !important;
+        }
+        
+                 /* Chat container altura adaptativa - más espacio */
+         .stContainer[data-testid="stVerticalBlock"] {
+             height: calc(100vh - 160px) !important;
+             min-height: 450px !important;
+             max-height: 550px !important;
+         }
+         
+         /* Chat input responsive */
+         div[data-testid="stChatInput"] {
+             position: sticky !important;
+             bottom: 0 !important;
+             background: var(--background-color) !important;
+             padding: 10px 0 !important;
+             border-top: 1px solid rgba(255,255,255,0.1) !important;
+         }
+        
+                 /* Títulos más compactos en móvil */
+         .titulo-app {
+             font-size: 1.5rem !important;
+         }
+         
+         /* Títulos compactos responsive */
+         div[style*="text-align: center"] h1 {
+             font-size: 1.5rem !important;
+             margin: 0 0 3px 0 !important;
+         }
+         
+         div[style*="text-align: center"] p {
+             font-size: 1rem !important;
+             margin: 0 !important;
+         }
+        
+        /* Mensajes de chat más compactos */
+        .stChatMessage {
+            margin-bottom: 0.5rem !important;
+        }
+        
+        .stChatMessage .stMarkdown {
+            font-size: 13px !important;
+        }
+        
+        /* Usuario info más compacto */
+        .user-info-flex {
+            padding: 4px 6px !important;
+            gap: 8px !important;
+        }
+        
+        .user-avatar {
+            width: 28px !important;
+            height: 28px !important;
+            font-size: 12px !important;
+        }
+        
+        .user-name {
+            font-size: 13px !important;
+            max-width: 90px !important;
+        }
+        
+        .logout-btn {
+            width: 28px !important;
+            height: 28px !important;
+            font-size: 14px !important;
+        }
+        
+        /* Tooltip responsive */
+        .user-tooltip {
+            min-width: 150px !important;
+            font-size: 11px !important;
+            left: -20px !important;
+        }
+        
+        /* Fecha sidebar más compacta */
+        .fecha-sidebar {
+            font-size: 0.75rem !important;
+            padding: 6px !important;
+        }
+        
+        /* Botones más grandes para touch */
+        div[data-testid="stSidebar"] button {
+            min-height: 44px !important;
+            font-size: 13px !important;
+        }
+        
+        /* Popover más ancho en móvil */
+        .stPopover {
+            min-width: 250px !important;
+        }
+    }
+    
+    /* Tablet - Pantallas medianas */
+    @media (min-width: 768px) and (max-width: 1024px) {
+        div[data-testid="stSidebar"] {
+            width: 320px !important;
+        }
+        
+        .titulo-app {
+            font-size: 2.2rem !important;
+        }
+        
+        .stChatMessage .stMarkdown {
+            font-size: 14px !important;
+        }
+        
+        .user-name {
+            max-width: 100px !important;
+        }
+    }
+    
+    /* Desktop - Pantallas grandes */
+    @media (min-width: 1025px) {
+        div[data-testid="stSidebar"] {
+            width: 350px !important;
+        }
+        
+        .user-name {
+            max-width: 120px !important;
+        }
+    }
+    
+         /* Pantallas muy pequeñas (móviles en landscape) */
+     @media (max-width: 480px) {
+         .titulo-app {
+             font-size: 1.3rem !important;
+         }
+         
+         /* Títulos ultra-compactos */
+         div[style*="text-align: center"] h1 {
+             font-size: 1.3rem !important;
+             margin: 0 0 2px 0 !important;
+         }
+         
+         div[style*="text-align: center"] p {
+             font-size: 0.9rem !important;
+         }
+        
+        .user-info-flex {
+            padding: 3px 5px !important;
+            gap: 6px !important;
+        }
+        
+        .user-avatar {
+            width: 24px !important;
+            height: 24px !important;
+            font-size: 10px !important;
+        }
+        
+        .user-name {
+            font-size: 12px !important;
+            max-width: 70px !important;
+        }
+        
+        .logout-btn {
+            width: 24px !important;
+            height: 24px !important;
+            font-size: 12px !important;
+        }
+        
+        /* Chat input más grande para móvil */
+        div[data-testid="stChatInput"] textarea {
+            font-size: 16px !important; /* Evita zoom en iOS */
+        }
+    }
+    
+         /* Orientación landscape en móvil */
+     @media (max-width: 767px) and (orientation: landscape) {
+         .stContainer[data-testid="stVerticalBlock"] {
+             height: calc(100vh - 100px) !important;
+             max-height: 400px !important;
+         }
+         
+         /* Sidebar se colapsa automáticamente en landscape */
+         div[data-testid="stSidebar"] {
+             width: 250px !important;
+         }
+         
+         /* Títulos más compactos en landscape */
+         .titulo-app {
+             font-size: 1.3rem !important;
+             margin: 0.5rem 0 !important;
+         }
+     }
+     
+     /* Mejoras para accesibilidad y UX */
+     @media (prefers-reduced-motion: reduce) {
+         * {
+             animation-duration: 0.01ms !important;
+             animation-iteration-count: 1 !important;
+             transition-duration: 0.01ms !important;
+         }
+     }
+     
+     /* Dark mode improvements */
+     @media (prefers-color-scheme: dark) {
+         .user-tooltip {
+             background: rgba(0,0,0,0.98) !important;
+             border: 1px solid rgba(255,255,255,0.1) !important;
+         }
+     }
+    
+    /* Touch-friendly improvements */
+    @media (hover: none) and (pointer: coarse) {
+        /* Dispositivos touch */
+        .logout-btn:hover {
+            background: rgba(255, 107, 107, 0.2) !important;
+        }
+        
+        /* Tooltip se muestra al tap en touch */
+        .user-name:active + .user-tooltip {
+            display: block !important;
+        }
+        
+        /* Botones más grandes en touch */
+        div[data-testid="stSidebar"] button {
+            min-height: 48px !important;
+            padding: 12px !important;
+        }
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -280,11 +514,27 @@ if "usar_contexto_memoria" not in st.session_state:
 precargar_memoria_usuario()
 
 # --- INTERFAZ PRINCIPAL DEL CHAT ---
-# Título personalizado con nombre del usuario usando estilos personalizados
-render_custom_title(f"Agente Atlassian", "app", "🤖")
-st.markdown(f"### Hola {user_name.split()[0]}!")
-# Container para mensajes con altura aumentada y scroll
-chat_container = st.container(height=600, border=True)
+# Títulos compactos en la parte superior
+st.markdown(f"""
+<div style="text-align: center; margin: 0 0 10px 0;">
+    <h1 style="
+        font-family: 'Poppins', sans-serif;
+        font-size: 1.8rem;
+        font-weight: 700;
+        color: #1e3a8a;
+        margin: 0 0 5px 0;
+        background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+    ">🤖 Agente Atlassian</h1>
+</div>
+""", unsafe_allow_html=True)
+
+# Container para mensajes con altura maximizada
+# Altura dinámica optimizada para aprovechar más espacio
+chat_height = 650  # Aumentado para aprovechar el espacio ganado
+chat_container = st.container(height=chat_height, border=True)
 with chat_container:
     for message in st.session_state.chat_history:
         if message["role"] == "user":
@@ -416,25 +666,7 @@ with st.sidebar:
         .user-name:hover + .user-tooltip {{
             display: block;
         }}
-        .logout-btn {{
-            width: 32px;
-            height: 32px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            background: transparent;
-            border: none;
-            border-radius: 50%;
-            color: #ff6b6b;
-            font-size: 16px;
-            cursor: pointer;
-            margin-left: auto;
-            transition: all 0.2s;
-        }}
-        .logout-btn:hover {{
-            background: rgba(255, 107, 107, 0.1);
-            color: #ee5a24;
-        }}
+
         .user-tooltip {{
             display: none;
             position: absolute;
@@ -449,6 +681,7 @@ with st.sidebar:
             min-width: 180px;
             box-shadow: 0 2px 8px rgba(0,0,0,0.15);
         }}
+        
         
         /* Estilos para la sección de memoria - 14px */
         div[data-testid="stSidebar"] .stToggle label {{
@@ -484,6 +717,7 @@ with st.sidebar:
         # Usuario autenticado con hover tooltip y botón integrado
         user_display_name = user_name if len(user_name) <= 20 else user_name[:17] + "..."
         
+                # Crear un contenedor único con flexbox para alineación perfecta
         st.markdown(f"""
         <div class="user-info-flex">
             <div class="user-avatar">{user_initials}</div>
@@ -491,11 +725,45 @@ with st.sidebar:
                 <div class="user-name" title="{user_name}">{user_display_name}</div>
                 <div class="user-tooltip">{current_user}</div>
             </div>
-            <form method="post">
-                <button class="logout-btn" name="logout" type="submit" title="Cerrar sesión">🚪</button>
-            </form>
         </div>
         """, unsafe_allow_html=True)
+        
+        # Botón de logout alineado usando CSS absoluto
+        st.markdown("""
+        <style>
+            .user-info-flex {
+                position: relative;
+                padding-right: 40px; /* Espacio para el botón */
+            }
+            
+            /* Estilar el botón de Streamlit para que se vea como nuestro diseño */
+            div[data-testid="stSidebar"] button[data-testid="baseButton-secondary"] {
+                position: absolute !important;
+                top: 50% !important;
+                right: 8px !important;
+                transform: translateY(-50%) !important;
+                width: 32px !important;
+                height: 32px !important;
+                min-height: 32px !important;
+                background: transparent !important;
+                border: none !important;
+                border-radius: 50% !important;
+                color: #ff6b6b !important;
+                font-size: 16px !important;
+                padding: 0 !important;
+                transition: all 0.2s !important;
+                z-index: 10 !important;
+            }
+            
+            div[data-testid="stSidebar"] button[data-testid="baseButton-secondary"]:hover {
+                background: rgba(255, 107, 107, 0.1) !important;
+                color: #ee5a24 !important;
+            }
+        </style>
+        """, unsafe_allow_html=True)
+        
+        if st.button("🚪", key="logout_btn", help="Cerrar sesión"):
+            st.logout()
         
 
 
