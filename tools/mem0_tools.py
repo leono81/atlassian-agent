@@ -118,6 +118,8 @@ async def save_memory(
     content_str = f"{alias} => {value}" if _context_val is None else f"{alias} => {value} ({_context_val})"
     
     try:
+        # Tracking removido para evitar dependencias circulares
+        
         current_user_id = get_current_user_id()
         logfire.debug(f"Saving memory for user: {current_user_id}")
         
@@ -192,6 +194,8 @@ async def search_memory(
             resolved_limit = 3
             
     try:
+        # Tracking removido para evitar dependencias circulares
+        
         current_user_id = get_current_user_id()
         logfire.debug(f"Searching memory for user: {current_user_id}")
         

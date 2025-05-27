@@ -3,12 +3,13 @@ import streamlit as st
 import asyncio
 import logfire
 from config import settings
-from agent_core.main_agent import main_agent # Importamos nuestro agente
+from ui.agent_wrapper import simple_agent # Importamos nuestro agente simplificado
 from pydantic_ai.messages import UserPromptPart, TextPart, ModelMessage # Para el historial
 from typing import List, Dict
 from tools.mem0_tools import search_memory, save_memory, precargar_memoria_completa_usuario
 from datetime import datetime
 from ui.custom_styles import apply_custom_title_styles, render_custom_title
+from ui.agent_status_tracker import start_agent_process, render_current_status, track_context_building, track_llm_thinking, track_response_generation, finish_agent_process, status_display
 
 # Configurar Logfire
 logfire.configure(
@@ -145,6 +146,28 @@ st.markdown("""
         margin-bottom: 0.8rem;
     }
     
+    /* Tamaño de letra consistente en mensajes de chat - 14px */
+    .stChatMessage .stMarkdown {
+        font-size: 14px !important;
+    }
+    
+    .stChatMessage .stMarkdown p {
+        font-size: 14px !important;
+    }
+    
+    .stChatMessage .stMarkdown li {
+        font-size: 14px !important;
+    }
+    
+    .stChatMessage .stMarkdown h1,
+    .stChatMessage .stMarkdown h2,
+    .stChatMessage .stMarkdown h3,
+    .stChatMessage .stMarkdown h4,
+    .stChatMessage .stMarkdown h5,
+    .stChatMessage .stMarkdown h6 {
+        font-size: 16px !important;
+    }
+    
     /* Estilo minimalista para métricas en el sidebar */
     [data-testid="metric-container"] {
         background-color: rgba(28, 131, 225, 0.05);
@@ -276,71 +299,228 @@ if prompt := st.chat_input("💬 Escribe tu consulta aquí...", key="main_chat")
     # Agregar mensaje del usuario al historial
     st.session_state.chat_history.append({"role": "user", "content": prompt})
     
+    # Mostrar inmediatamente la pregunta del usuario en el chat
+    with chat_container:
+        for message in st.session_state.chat_history:
+            if message["role"] == "user":
+                with st.chat_message("user", avatar="👤"):
+                    st.markdown(message["content"])
+            elif message["role"] == "assistant":
+                with st.chat_message("assistant", avatar="🤖"):
+                    st.markdown(message["content"])
+        
+        # Mostrar el estado del agente dentro del chat
+        with st.chat_message("assistant", avatar="🤖"):
+            status_placeholder = st.empty()
+    
     # Generar contexto completo (usuario + memoria)
     contexto_completo = generar_contexto_completo()
     prompt_con_contexto = f"{contexto_completo}\n\n{prompt}" if contexto_completo else prompt
     
     # Procesar respuesta del agente
     try:
-        with st.status("🤖 Procesando tu consulta...", expanded=True) as status:
-            st.write("🔍 Consultando memoria...")
-            st.write("🔧 Ejecutando herramientas...")
-            
-            with logfire.span("agent_interaction_streamlit", user_prompt=prompt, framework="streamlit"):
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                result = loop.run_until_complete(main_agent.run(
-                    prompt_con_contexto,
-                    message_history=st.session_state.pydantic_ai_messages
-                ))
-                loop.close()
-                
-                # Actualizar historial con los nuevos mensajes del agente
-                st.session_state.pydantic_ai_messages.extend(result.new_messages())
-            
-            status.update(label="✅ Respuesta lista!", state="complete")
+        # Paso 1: Iniciar
+        start_agent_process("Procesando tu consulta...")
+        with status_placeholder:
+            render_current_status(status_display)
         
-        # Agregar respuesta al historial para visualización
+        # Paso 2: Construir contexto
+        track_context_building()
+        with status_placeholder:
+            render_current_status(status_display)
+        
+        with logfire.span("agent_interaction_streamlit", user_prompt=prompt, framework="streamlit"):
+            # Paso 3: Analizar consulta
+            track_llm_thinking()
+            with status_placeholder:
+                render_current_status(status_display)
+            
+            # Paso 4: Generar respuesta
+            track_response_generation()
+            with status_placeholder:
+                render_current_status(status_display)
+            
+            # Ejecutar el agente
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            result = loop.run_until_complete(simple_agent.run(
+                prompt_con_contexto,
+                message_history=st.session_state.pydantic_ai_messages
+            ))
+            loop.close()
+            
+            # Actualizar historial con los nuevos mensajes del agente
+            st.session_state.pydantic_ai_messages.extend(result.new_messages())
+        
+        # Reemplazar el estado con la respuesta final
         if result.output:
+            with status_placeholder:
+                st.markdown(result.output)
             st.session_state.chat_history.append({"role": "assistant", "content": result.output})
         else:
-            st.session_state.chat_history.append({"role": "assistant", "content": "⚠️ El agente no produjo una respuesta. Intenta reformular tu pregunta."})
+            error_msg = "⚠️ El agente no produjo una respuesta. Intenta reformular tu pregunta."
+            with status_placeholder:
+                st.markdown(error_msg)
+            st.session_state.chat_history.append({"role": "assistant", "content": error_msg})
             
     except Exception as e:
         error_message = f"❌ **Error:** {str(e)}\n\n💡 **Sugerencias:**\n- Verifica que el modelo esté funcionando correctamente\n- Intenta simplificar tu consulta\n- Revisa la configuración del contexto de memoria"
+        with status_placeholder:
+            st.markdown(error_message)
         st.session_state.chat_history.append({"role": "assistant", "content": error_message})
     
     st.rerun()
 
 # --- SIDEBAR ---
-# Información del usuario autenticado
-st.sidebar.markdown("### 👤 Usuario")
-st.sidebar.markdown(f"**{user_name}**")
-st.sidebar.markdown(f"📧 `{current_user}`")
+# Información del usuario minimalista y elegante
+with st.sidebar:
+    st.markdown(f"""
+    <style>
+        .user-info-flex {{
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 5px 8px;
+            border-radius: 8px;
+            background-color: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.1);
+            margin-bottom: 12px;
+            position: relative;
+            transition: background 0.2s;
+        }}
+        .user-avatar {{
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            font-weight: 600;
+            color: white;
+            flex-shrink: 0;
+        }}
+        .user-name {{
+            font-size: 14px;
+            font-weight: 500;
+            color: #fff;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            max-width: 110px;
+            position: relative;
+            cursor: pointer;
+        }}
+        .user-name:hover + .user-tooltip {{
+            display: block;
+        }}
+        .logout-btn {{
+            width: 32px;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: transparent;
+            border: none;
+            border-radius: 50%;
+            color: #ff6b6b;
+            font-size: 16px;
+            cursor: pointer;
+            margin-left: auto;
+            transition: all 0.2s;
+        }}
+        .logout-btn:hover {{
+            background: rgba(255, 107, 107, 0.1);
+            color: #ee5a24;
+        }}
+        .user-tooltip {{
+            display: none;
+            position: absolute;
+            left: 0;
+            top: 110%;
+            background: rgba(0,0,0,0.95);
+            color: #fff;
+            border-radius: 8px;
+            padding: 8px 12px;
+            font-size: 12px;
+            z-index: 10;
+            min-width: 180px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+        }}
+        
+        /* Estilos para la sección de memoria - 14px */
+        div[data-testid="stSidebar"] .stToggle label {{
+            font-size: 14px !important;
+        }}
+        div[data-testid="stSidebar"] .stPopover button {{
+            font-size: 14px !important;
+        }}
+        div[data-testid="stSidebar"] .stPopover .stMarkdown {{
+            font-size: 14px !important;
+        }}
+        div[data-testid="stSidebar"] .stPopover .stMarkdown p {{
+            font-size: 14px !important;
+        }}
+        div[data-testid="stSidebar"] .stPopover .stMarkdown li {{
+            font-size: 14px !important;
+        }}
+    </style>
+    """, unsafe_allow_html=True)
 
-# Botón de logout (solo si la autenticación está disponible)
-try:
-    # Verificar si la autenticación está disponible antes de mostrar logout
-    if hasattr(st, 'user') and hasattr(st.user, 'is_logged_in') and st.user.is_logged_in:
-        if st.sidebar.button("🚪 Cerrar Sesión", use_container_width=True):
-            st.logout()
+    # Obtener iniciales del usuario para el avatar
+    user_initials = ''.join([name[0].upper() for name in user_name.split()[:2]])
+    
+    # Verificar si la autenticación está disponible
+    auth_available = False
+    try:
+        if hasattr(st, 'user') and hasattr(st.user, 'is_logged_in') and st.user.is_logged_in:
+            auth_available = True
+    except (AttributeError, KeyError):
+        pass
+    
+    if auth_available:
+        # Usuario autenticado con hover tooltip y botón integrado
+        user_display_name = user_name if len(user_name) <= 20 else user_name[:17] + "..."
+        
+        st.markdown(f"""
+        <div class="user-info-flex">
+            <div class="user-avatar">{user_initials}</div>
+            <div style="display: flex; flex-direction: column; flex: 1;">
+                <div class="user-name" title="{user_name}">{user_display_name}</div>
+                <div class="user-tooltip">{current_user}</div>
+            </div>
+            <form method="post">
+                <button class="logout-btn" name="logout" type="submit" title="Cerrar sesión">🚪</button>
+            </form>
+        </div>
+        """, unsafe_allow_html=True)
+        
+
+
     else:
-        # En modo sin autenticación, mostrar información en lugar del botón
-        st.sidebar.info("🔓 **Modo sin autenticación**\n\nPara habilitar login/logout, configura OAuth2 siguiendo `SETUP_OAUTH.md`")
-except (AttributeError, KeyError):
-    # La autenticación no está disponible
-    st.sidebar.info("🔓 **Modo sin autenticación**\n\nPara habilitar login/logout, configura OAuth2 siguiendo `SETUP_OAUTH.md`")
+        # Modo sin autenticación
+        st.markdown(f"""
+        <div class="user-info-flex">
+            <div class="user-avatar">{user_initials}</div>
+            <div style="display: flex; flex-direction: column; flex: 1;">
+                <div class="user-name">{user_name}</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.markdown("""
+        <div class="auth-info">
+            Modo demo - Para autenticación multi-usuario configura OAuth2
+        </div>
+        """, unsafe_allow_html=True)
 
 st.sidebar.markdown("---")
 
 # Mostrar fecha actual
 fecha_actual = datetime.now().strftime("%d de %B, %Y")
 st.sidebar.markdown(f'<div class="fecha-sidebar">📅 {fecha_actual}</div>', unsafe_allow_html=True)
-
-st.sidebar.info(
-    f"**Modelo:** {settings.PYDANTIC_AI_MODEL}\n\n"
-    f"*Versión de desarrollo*"
-)
 
 st.sidebar.markdown("---")
 
@@ -366,13 +546,7 @@ contexto_activo = st.sidebar.toggle(
 )
 st.session_state.usar_contexto_memoria = contexto_activo
 
-# Indicador visual del estado
-if contexto_activo and cantidad_alias > 0:
-    st.sidebar.success(f"✅ Contexto activo: usuario + {cantidad_alias} alias")
-elif contexto_activo and cantidad_alias == 0:
-    st.sidebar.success("✅ Contexto activo: usuario (sin alias)")
-else:
-    st.sidebar.info("ℹ️ Contexto desactivado - el agente usará search_memory")
+# El estado se muestra en el toggle, no necesitamos indicador adicional
 
 # Popover para ver la memoria (sin ícono del ojo)
 with st.sidebar.popover(f"Ver memoria ({cantidad_alias} alias)", use_container_width=True):
@@ -394,8 +568,32 @@ with st.sidebar.popover(f"Ver memoria ({cantidad_alias} alias)", use_container_w
         st.markdown("- El agente guarda información por ti")
         st.markdown("- Usas la herramienta `save_memory`")
 
-if st.sidebar.button("Limpiar historial de chat"):
-    st.session_state.pydantic_ai_messages = []
-    st.session_state.streamlit_display_messages = []
-    st.session_state.chat_history = []
-    st.rerun()
+# Sección de acciones - separada del área de memoria
+st.sidebar.markdown("---")
+col1, col2, col3 = st.sidebar.columns([1, 2, 1])
+with col2:
+    if st.button("Limpiar historial", use_container_width=True):
+        st.session_state.pydantic_ai_messages = []
+        st.session_state.streamlit_display_messages = []
+        st.session_state.chat_history = []
+        st.rerun()
+
+# El logout se maneja automáticamente a través del formulario HTML en la sección de usuario
+
+# Información del sistema al final absoluto del sidebar
+with st.sidebar:
+    st.markdown("---")
+    st.markdown(f"""
+    <div style="
+        font-size: 10px !important; 
+        color: #666; 
+        text-align: center; 
+        padding: 8px 4px; 
+        line-height: 1.3;
+        opacity: 0.7;
+        font-family: inherit;
+    ">
+        {settings.PYDANTIC_AI_MODEL}<br>
+        <span style="font-size: 10px !important;">v0.1.0 beta</span>
+    </div>
+    """, unsafe_allow_html=True)

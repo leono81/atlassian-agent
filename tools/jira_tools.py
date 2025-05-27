@@ -168,6 +168,8 @@ async def search_issues(
     logfire.info("Ejecutando search_issues con JQL: {jql_query}, max_results: {max_results}",
                  jql_query=jql_query, max_results=actual_max_results)
     try:
+        # Tracking removido para evitar dependencias circulares
+        
         jira = get_jira_client()
         loop = asyncio.get_running_loop()
         with logfire.span("jira.jql_search", jql=jql_query, limit=actual_max_results):
