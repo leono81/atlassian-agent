@@ -1170,9 +1170,9 @@ async def get_my_current_sprint_work(
     assignee_clause = f'assignee = "{assignee}"' if assignee else 'assignee = currentUser()'
     
     if project_key:
-        jql_query = f'project = "{project_key}" AND sprint in openSprints() AND {assignee_clause} ORDER BY status ASC, priority DESC'
+        jql_query = f'project = "{project_key}" AND sprint in openSprints() AND assignee = currentUser() ORDER BY status ASC, priority DESC'
     else:
-        jql_query = f'sprint in openSprints() AND {assignee_clause} ORDER BY status ASC, priority DESC'
+        jql_query = f'sprint in openSprints() AND assignee = currentUser() ORDER BY status ASC, priority DESC'
     
     logfire.info("Ejecutando get_my_current_sprint_work con JQL: {jql_query}", jql_query=jql_query)
     

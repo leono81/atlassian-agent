@@ -37,12 +37,42 @@ def get_jira_client() -> Jira:
                 )
                 # Probar la conexión (opcional pero recomendado)
                 user = _jira_client.myself()
-                logfire.info("Cliente Jira inicializado y conectado exitosamente como {user_displayName}", user_displayName=user.get('displayName'))
+                logfire.info("Cliente Jira inicializado y conectado exitosamente")
         except Exception as e:
             logfire.error("Error al inicializar el cliente Jira: {error_message}", error_message=str(e), exc_info=True)
             _jira_client = None # Asegurar que no se use una instancia fallida
             raise ConnectionError(f"No se pudo conectar a Jira: {e}")
     return _jira_client
+
+def check_jira_connection() -> tuple[bool, str]:
+    """
+    Verifica la conexión con Jira intentando obtener los detalles del usuario actual.
+    Retorna una tupla (status: bool, message: str).
+    """
+    try:
+        client = get_jira_client()
+        if client:
+            user = client.myself()
+            if user and user.get('displayName'):
+                message = f"Conexión a Jira exitosa. Usuario: {user.get('displayName')}."
+                #logfire.info(message)
+                return True, message
+            else:
+                message = "Conexión a Jira establecida, pero no se pudo obtener información del usuario."
+                logfire.warn(message)
+                return False, message
+        else:
+            message = "No se pudo obtener el cliente Jira para verificar la conexión."
+            logfire.error(message)
+            return False, message
+    except ConnectionError as e:
+        message = f"Error de conexión con Jira: {e}"
+        logfire.error(message, exc_info=True)
+        return False, message
+    except Exception as e:
+        message = f"Error inesperado al verificar la conexión con Jira: {e}"
+        logfire.error(message, exc_info=True)
+        return False, message
 
 if __name__ == "__main__":
     # Prueba rápida para verificar la inicialización del cliente Jira
@@ -63,6 +93,13 @@ if __name__ == "__main__":
                 print(f"- {project['name']} (Key: {project['key']})")
         else:
             print("No se encontraron proyectos o no hay acceso.")
+
+        # Probar la nueva función de health check
+        print("\n--- Prueba de Health Check Jira ---")
+        status, msg = check_jira_connection()
+        print(f"Estado: {'OK' if status else 'Error'}")
+        print(f"Mensaje: {msg}")
+        print("--- Fin Prueba de Health Check Jira ---")
 
     except ValueError as e:
         print(f"Error de configuración: {e}")

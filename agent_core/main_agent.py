@@ -5,6 +5,10 @@ import logfire
 import asyncio
 from pydantic_ai.messages import ToolReturnPart
 
+# Importar funciones de health check
+from agent_core.jira_instances import check_jira_connection
+from agent_core.confluence_instances import check_confluence_connection
+
 # Importar las funciones de herramientas
 from tools.jira_tools import (
     search_issues as jira_search_issues_tool_func,
@@ -214,6 +218,11 @@ main_agent = Agent(
     # Podríamos aumentar los reintentos si las operaciones de escritura son más propensas a fallos transitorios
     # retries=2
 )
+
+# Realizar health checks al iniciar
+_jira_status, _jira_msg = check_jira_connection()
+_confluence_status, _confluence_msg = check_confluence_connection()
+
 
 logfire.info("Agente principal inicializado con modelo: {model_name} y {tool_count} herramientas.",
              model_name=settings.PYDANTIC_AI_MODEL, tool_count=len(available_tools))

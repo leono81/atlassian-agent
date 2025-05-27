@@ -37,7 +37,7 @@
 -   [X] **Tarea 3.4**: Mejorar el uso de memoria.
 -   [] **Tarea 3.5**: Railways para mejor performance en las consultas de Jira.
 -   [X] **Tarea 3.6**: Manejo de estados de tareas e historias
--   [] **Tarea 3.7**: Control de las Story Points
+-   [X] **Tarea 3.7**: Control de las Story Points
 
 ## Hito 4: Preparación A2A y Refinamientos
 
