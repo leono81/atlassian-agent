@@ -3,17 +3,27 @@ from config import settings
 import logfire
 from typing import Optional
 
-# Aunque ya configuramos Logfire en ui/app.py, si este módulo se importa
-# antes o se usa en un contexto sin Streamlit (ej. tests), es bueno tenerlo.
-# Logfire es idempotente, así que llamarlo múltiples veces no es un problema.
-logfire.configure(
-    token=settings.LOGFIRE_TOKEN,
-    send_to_logfire="if-token-present",
-    service_name="jira_confluence_agent",
-    service_version="0.1.0" # Puedes versionar tu servicio
-)
-# Si atlassian-python-api usa httpx internamente y queremos trazas detalladas:
-# logfire.instrument_httpx() # Descomentar si es necesario y se ha instalado httpx explícitamente.
+# Configuración condicional de Logfire para evitar duplicados
+def _configure_logfire_if_needed():
+    """Configura Logfire solo si es necesario para evitar logs duplicados"""
+    try:
+        # Verificar si ya está configurado comprobando si hay un token
+        if hasattr(logfire, '_configured') and getattr(logfire, '_configured', False):
+            return
+        
+        if settings.LOGFIRE_TOKEN:
+            logfire.configure(
+                token=settings.LOGFIRE_TOKEN,
+                send_to_logfire="if-token-present",
+                service_name="jira_confluence_agent",
+                service_version="0.1.0"
+            )
+            setattr(logfire, '_configured', True)
+    except Exception:
+        # Si hay error configurando logfire, continuar sin él
+        pass
+
+_configure_logfire_if_needed()
 
 # --- JIRA Client Instance ---
 # _jira_client = None # Eliminamos el singleton global
@@ -32,7 +42,9 @@ def get_jira_client(username: Optional[str] = None, api_key: Optional[str] = Non
     jira_token = api_key if api_key else settings.JIRA_API_TOKEN
 
     if not all([jira_url, jira_user, jira_token]):
-        logfire.error("Credenciales de Jira (URL, Username, Token) no configuradas completamente.")
+        # Solo loggear si las credenciales fueron explícitamente provistas
+        if username and api_key:
+            logfire.error("Credenciales de Jira (URL, Username, Token) no configuradas completamente.")
         raise ValueError("Credenciales de Jira no configuradas completamente. Revisa tu configuración.")
     
     try:
@@ -53,20 +65,19 @@ def get_jira_client(username: Optional[str] = None, api_key: Optional[str] = Non
         raise ConnectionError(f"No se pudo conectar a Jira para {jira_user}: {e}")
     # return _jira_client # Ya no es global
 
-def check_jira_connection() -> tuple[bool, str]:
+def check_jira_connection(username: Optional[str] = None, api_key: Optional[str] = None) -> tuple[bool, str]:
     """
     Verifica la conexión con Jira intentando obtener los detalles del usuario actual.
-    Para esta verificación del sistema, se usan las credenciales globales.
+    Si se proveen credenciales específicas, las usa. Si no, usa las globales.
     Retorna una tupla (status: bool, message: str).
     """
     try:
-        # Para el health check, usamos get_jira_client sin parámetros para que use credenciales globales.
-        client = get_jira_client()
+        # Usar credenciales específicas si se proveen, sino las globales
+        client = get_jira_client(username, api_key)
         if client:
             user = client.myself()
             if user and user.get('displayName'):
                 message = f"Conexión a Jira exitosa. Usuario: {user.get('displayName')}."
-                #logfire.info(message)
                 return True, message
             else:
                 message = "Conexión a Jira establecida, pero no se pudo obtener información del usuario."
@@ -76,6 +87,9 @@ def check_jira_connection() -> tuple[bool, str]:
             message = "No se pudo obtener el cliente Jira para verificar la conexión."
             logfire.error(message)
             return False, message
+    except ValueError as e:
+        # Si las credenciales no están configuradas, no es un error crítico durante health check silencioso
+        return False, str(e)
     except ConnectionError as e:
         message = f"Error de conexión con Jira: {e}"
         logfire.error(message, exc_info=True)

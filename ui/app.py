@@ -23,6 +23,9 @@ logfire.configure(
     service_name="jira_confluence_agent_ui", 
     service_version="0.1.0"
 )
+# Marcar como configurado para evitar duplicados
+setattr(logfire, '_configured', True)
+
 # No hay logfire.instrument_streamlit() directo.
 # La instrumentación de PydanticAI se hace donde se define el agente.
 # Y las herramientas/clientes se instrumentarían con logfire.instrument_httpx() si fuera necesario.
@@ -567,6 +570,25 @@ if "atlassian_api_key" not in st.session_state or "atlassian_username" not in st
     
     if api_key and atl_username:
         logfire.info(f"Credenciales de Atlassian (key y username) cargadas en sesión para {current_user}")
+        
+        # Health check silencioso con las credenciales cargadas (opcional)
+        try:
+            from agent_core.main_agent import perform_health_checks
+            jira_status, jira_msg, conf_status, conf_msg = perform_health_checks(atl_username, api_key)
+            
+            if jira_status:
+                logfire.info(f"✅ Conexión Jira verificada: {jira_msg}")
+            else:
+                logfire.warn(f"⚠️ Conexión Jira: {jira_msg}")
+                
+            if conf_status:
+                logfire.info(f"✅ Conexión Confluence verificada: {conf_msg}")
+            else:
+                logfire.warn(f"⚠️ Conexión Confluence: {conf_msg}")
+                
+        except Exception as e:
+            # Si falla el health check, no es crítico, solo loggeamos
+            logfire.warn(f"Health check opcional falló: {e}")
     else:
         logfire.info(f"No se encontraron credenciales de Atlassian persistentes completas para {current_user}.")
 
@@ -772,7 +794,10 @@ with st.sidebar:
         }}
     </style>
     """, unsafe_allow_html=True)
-
+    # Mostrar fecha actual
+    fecha_actual = datetime.now().strftime("%d de %B, %Y")
+    st.sidebar.markdown(f'<div class="fecha-sidebar">📅 {fecha_actual}</div>', unsafe_allow_html=True)
+    st.sidebar.markdown("---")
     # Obtener iniciales del usuario para el avatar
     user_initials = ''.join([name[0].upper() for name in user_name.split()[:2]])
     
@@ -857,11 +882,6 @@ with st.sidebar:
 
 st.sidebar.markdown("---")
 
-# Mostrar fecha actual
-fecha_actual = datetime.now().strftime("%d de %B, %Y")
-st.sidebar.markdown(f'<div class="fecha-sidebar">📅 {fecha_actual}</div>', unsafe_allow_html=True)
-
-st.sidebar.markdown("---")
 
 # EJEMPLO DE DASHBOARD DE MÉTRICAS (comentado)
 # st.sidebar.markdown("### 📊 Métricas del Sistema")
@@ -911,7 +931,7 @@ with st.sidebar.popover(f"Ver memoria ({cantidad_alias} alias)", use_container_w
 st.sidebar.markdown("---")
 col1, col2, col3 = st.sidebar.columns([1, 2, 1])
 with col2:
-    if st.button("Limpiar historial", use_container_width=True):
+    if st.button("Limpiar historial", use_container_width=True  ):
         st.session_state.pydantic_ai_messages = []
         st.session_state.streamlit_display_messages = []
         st.session_state.chat_history = []
@@ -919,30 +939,14 @@ with col2:
 
 # El logout se maneja automáticamente a través del formulario HTML en la sección de usuario
 
-# Información del sistema al final absoluto del sidebar
-with st.sidebar:
-    st.markdown("---")
-    st.markdown(f"""
-    <div style="
-        font-size: 10px !important; 
-        color: #666; 
-        text-align: center; 
-        padding: 8px 4px; 
-        line-height: 1.3;
-        opacity: 0.7;
-        font-family: inherit;
-    ">
-        {settings.PYDANTIC_AI_MODEL}<br>
-        <span style="font-size: 10px !important;">v0.1.0 beta</span>
-    </div>
-    """, unsafe_allow_html=True)
 
 # --- CONFIGURACIÓN DE ATLASSIAN API KEY ---
+st.sidebar.markdown("---")
 st.sidebar.subheader("🔑 Configuración Atlassian") # Título generalizado
 
 # Este estado refleja si las credenciales están en la SESIÓN ACTUAL
 if st.session_state.get("atlassian_api_key") and st.session_state.get("atlassian_username"):
-    st.sidebar.success("Credenciales de Atlassian configuradas para esta sesión.")
+    st.sidebar.success("Credenciales de Atlassian ✅")
 elif st.session_state.get("atlassian_api_key"):
     st.sidebar.warning("Falta el nombre de usuario de Atlassian.")
 elif st.session_state.get("atlassian_username"):
@@ -1007,5 +1011,25 @@ with st.sidebar.popover("Gestionar Credenciales de Atlassian", use_container_wid
         st.caption("ℹ️ Ya tienes credenciales guardadas. Ingresar nuevas las reemplazará.")
     else:
         st.caption("ℹ️ Aún no has guardado credenciales.")
-        
+
+
+# Información del sistema al final absoluto del sidebar
+with st.sidebar:
+    st.markdown("---")
+    st.markdown(f"""
+    <div style="
+        font-size: 10px !important; 
+        color: #666; 
+        text-align: center; 
+        padding: 8px 4px; 
+        line-height: 1.3;
+        opacity: 0.7;
+        font-family: inherit;
+    ">
+        {settings.PYDANTIC_AI_MODEL}<br>
+        <span style="font-size: 10px !important;">v0.1.0 beta</span>
+    </div>
+    """, unsafe_allow_html=True)
+
+
 st.sidebar.markdown("---")

@@ -3,6 +3,7 @@ from pydantic_ai import Agent, Tool
 from config import settings 
 import logfire
 import asyncio
+from typing import Optional
 from pydantic_ai.messages import ToolReturnPart
 
 # Importar funciones de health check
@@ -45,15 +46,29 @@ from tools.mem0_tools import save_memory as save_memory_tool_func, search_memory
 # Nueva herramienta de formato
 from tools.formatting_tools import format_jira_issues_for_markdown as format_jira_issues_tool_func
 
-# Configuración de Logfire
-logfire.configure(
-    token=settings.LOGFIRE_TOKEN,
-    send_to_logfire="if-token-present",
-    service_name="jira_confluence_agent",
-    service_version="0.1.0"
-)
-logfire.instrument_pydantic_ai()
-logfire.instrument_pydantic()
+# Configuración condicional de Logfire para evitar duplicados
+def _configure_logfire_if_needed():
+    """Configura Logfire solo si es necesario para evitar logs duplicados"""
+    try:
+        # Verificar si ya está configurado comprobando si hay un token
+        if hasattr(logfire, '_configured') and getattr(logfire, '_configured', False):
+            return
+        
+        if settings.LOGFIRE_TOKEN:
+            logfire.configure(
+                token=settings.LOGFIRE_TOKEN,
+                send_to_logfire="if-token-present",
+                service_name="jira_confluence_agent",
+                service_version="0.1.0"
+            )
+            logfire.instrument_pydantic_ai()
+            logfire.instrument_pydantic()
+            setattr(logfire, '_configured', True)
+    except Exception:
+        # Si hay error configurando logfire, continuar sin él
+        pass
+
+_configure_logfire_if_needed()
 
 # --- Definición de Herramientas para PydanticAI ---
 # Jira Tools
@@ -219,10 +234,16 @@ main_agent = Agent(
     # retries=2
 )
 
-# Realizar health checks al iniciar
-_jira_status, _jira_msg = check_jira_connection()
-_confluence_status, _confluence_msg = check_confluence_connection()
-
+# Función para hacer health checks cuando se necesiten (no automáticamente)
+def perform_health_checks(username: Optional[str] = None, api_key: Optional[str] = None):
+    """Ejecuta health checks de Jira y Confluence con credenciales específicas o globales"""
+    from agent_core.jira_instances import check_jira_connection
+    from agent_core.confluence_instances import check_confluence_connection
+    
+    _jira_status, _jira_msg = check_jira_connection(username, api_key)
+    _confluence_status, _confluence_msg = check_confluence_connection(username, api_key)
+    
+    return _jira_status, _jira_msg, _confluence_status, _confluence_msg
 
 logfire.info("Agente principal inicializado con modelo: {model_name} y {tool_count} herramientas.",
              model_name=settings.PYDANTIC_AI_MODEL, tool_count=len(available_tools))
