@@ -16,3 +16,10 @@ build/
 
 # Streamlit secrets - NUNCA subir a git
 .streamlit/secrets.toml
+
+# Archivos con credenciales de usuarios - INFORMACIÓN SENSIBLE
+.streamlit/user_atlassian_keys.json
+
+# Logs y archivos temporales de Streamlit
+.streamlit/*.log
+.streamlit/cache/

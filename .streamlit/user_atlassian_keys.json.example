@@ -1,0 +1,10 @@
+{
+  "user@example.com": {
+    "api_key": "PLAINTEXT_NEEDS_ENCRYPTION:your_encrypted_atlassian_api_key_here",
+    "username": "user@company.com"
+  },
+  "another.user@example.com": {
+    "api_key": "PLAINTEXT_NEEDS_ENCRYPTION:another_encrypted_api_key_here", 
+    "username": "another.user@company.com"
+  }
+} 
