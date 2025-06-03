@@ -20,6 +20,10 @@ build/
 # Archivos con credenciales de usuarios - INFORMACIÓN SENSIBLE
 .streamlit/user_atlassian_keys.json
 
+# Base de datos y cifrado - INFORMACIÓN SENSIBLE
+.streamlit/user_credentials.db
+.streamlit/encryption.key
+
 # Logs y archivos temporales de Streamlit
 .streamlit/*.log
 .streamlit/cache/

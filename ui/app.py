@@ -3,6 +3,9 @@ import streamlit as st
 import asyncio
 import logfire
 from config import settings
+# Nuevas importaciones para BD y cifrado
+from config.user_credentials_db import user_credentials_db
+from config.encryption import credential_encryption
 from ui.agent_wrapper import simple_agent # Importamos nuestro agente simplificado
 from pydantic_ai.messages import UserPromptPart, TextPart, ModelMessage # Para el historial
 from typing import List, Dict
@@ -41,135 +44,42 @@ st.markdown("""
 USER_KEYS_DIR = Path(".streamlit")
 USER_KEYS_FILE = USER_KEYS_DIR / "user_atlassian_keys.json"
 
-# --- FUNCIONES DE CIFRADO (PLACEHOLDERS - IMPLEMENTAR CIFRADO REAL) ---
+# --- FUNCIONES DE CIFRADO (AHORA USANDO MÓDULO REAL) ---
 def _encrypt_key(api_key: str) -> str:
-    """
-    Placeholder para cifrar la API key.
-    !!! IMPORTANTE: Reemplazar con un mecanismo de cifrado robusto. !!!
-    """
-    if not api_key:
-        return ""
-    return f"PLAINTEXT_NEEDS_ENCRYPTION:{api_key}"
+    """Cifra la API key usando el módulo de cifrado real"""
+    return credential_encryption.encrypt(api_key)
 
 def _decrypt_key(encrypted_key: str) -> str:
-    """
-    Placeholder para descifrar la API key.
-    !!! IMPORTANTE: Reemplazar con el mecanismo de cifrado correspondiente. !!!
-    """
-    if not encrypted_key:
-        return ""
-    if encrypted_key.startswith("PLAINTEXT_NEEDS_ENCRYPTION:"):
-        return encrypted_key.split(":", 1)[1]
-    return ""
+    """Descifra la API key usando el módulo de cifrado real"""
+    return credential_encryption.decrypt(encrypted_key)
 
-# --- GESTIÓN DE CREDENCIALES DE ATLASSIAN POR USUARIO ---
-# La estructura en JSON será: { "user_google_email": { "api_key": "encrypted_api_key", "username": "atlassian_username" } }
-def _ensure_user_keys_file_exists():
-    """Asegura que el directorio y el archivo de credenciales de usuario existan."""
-    try:
-        USER_KEYS_DIR.mkdir(exist_ok=True)
-        if not USER_KEYS_FILE.exists():
-            with open(USER_KEYS_FILE, 'w') as f:
-                json.dump({}, f)
-            logfire.info(f"Creado archivo de credenciales de usuario: {USER_KEYS_FILE}")
-    except Exception as e:
-        logfire.error(f"Error asegurando archivo de credenciales de usuario: {e}", exc_info=True)
-
-def load_all_user_credentials() -> dict:
-    """Carga todas las credenciales de Atlassian de los usuarios desde el archivo JSON."""
-    _ensure_user_keys_file_exists()
-    try:
-        with open(USER_KEYS_FILE, 'r') as f:
-            data = json.load(f)
-        
-        cleaned_data = {}
-        if isinstance(data, dict): # Ensure 'data' itself is a dictionary
-            for email, creds in data.items():
-                if isinstance(creds, dict):
-                    cleaned_data[email] = creds
-                else:
-                    # Log a warning and skip this malformed entry
-                    logfire.warn(
-                        f"Datos de credenciales malformados para el usuario '{email}' en '{USER_KEYS_FILE}'. "
-                        f"Se esperaba un diccionario, pero se obtuvo {type(creds)}. "
-                        "Las credenciales de este usuario serán ignoradas. Por favor, guárdelas de nuevo mediante la interfaz."
-                    )
-        else:
-            # The entire file content is not a dictionary, this is a more severe corruption
-            logfire.error(
-                f"El archivo de credenciales '{USER_KEYS_FILE}' no contiene un JSON de tipo diccionario válido. "
-                f"Se obtuvo {type(data)}. Se tratará como si no hubiera credenciales guardadas. "
-                "Considere revisar o eliminar el archivo."
-            )
-            # Attempt to ensure a valid empty file structure for next time if corruption was severe.
-            # This might re-create the file with an empty JSON object if it was completely unparsable or not a dict.
-            USER_KEYS_DIR.mkdir(exist_ok=True) # Ensure directory exists
-            with open(USER_KEYS_FILE, 'w') as f:
-                json.dump({}, f)
-            logfire.info(f"Archivo de credenciales '{USER_KEYS_FILE}' reiniciado a un diccionario vacío debido a corrupción severa.")
-
-
-        return cleaned_data
-    except (FileNotFoundError, json.JSONDecodeError) as e:
-        logfire.warn(f"No se pudo cargar o decodificar el archivo de credenciales ({USER_KEYS_FILE}): {e}. Retornando dict vacío.")
-        _ensure_user_keys_file_exists() # Ensures file exists for next time, potentially creating it empty
-        return {}
-    except Exception as e: # Catch any other unexpected errors during loading/cleaning
-        logfire.error(f"Error inesperado al cargar las credenciales de usuario desde {USER_KEYS_FILE}: {e}", exc_info=True)
-        _ensure_user_keys_file_exists() # Attempt to ensure a valid empty file for safety
-        return {}
-
-def save_all_user_credentials(user_credentials_data: dict):
-    """Guarda todas las credenciales de Atlassian de los usuarios en el archivo JSON."""
-    _ensure_user_keys_file_exists()
-    try:
-        with open(USER_KEYS_FILE, 'w') as f:
-            json.dump(user_credentials_data, f, indent=4)
-        logfire.info(f"Datos de credenciales de usuario guardados en: {USER_KEYS_FILE}")
-    except Exception as e:
-        logfire.error(f"Error guardando archivo de credenciales ({USER_KEYS_FILE}): {e}", exc_info=True)
-        st.error("Error al guardar la configuración de credenciales de Atlassian.")
-
+# --- GESTIÓN DE CREDENCIALES DE ATLASSIAN POR USUARIO (AHORA CON BD) ---
 def get_atlassian_credentials_for_user(user_email: str) -> tuple[str, str]:
-    """Obtiene y descifra la API key y el nombre de usuario de Atlassian para un usuario específico."""
+    """Obtiene las credenciales de Atlassian para un usuario específico desde la BD."""
     if not user_email:
         return "", ""
-    all_credentials = load_all_user_credentials()
-    user_data = all_credentials.get(user_email, {})
-    encrypted_api_key = user_data.get("api_key")
-    atlassian_username = user_data.get("username", "")
     
-    api_key = ""
-    if encrypted_api_key:
-        api_key = _decrypt_key(encrypted_api_key)
-        
+    api_key, atlassian_username = user_credentials_db.get_credentials(user_email)
     return api_key, atlassian_username
 
 def save_atlassian_credentials_for_user(user_email: str, api_key: str, atlassian_username: str):
-    """Cifra y guarda la API key y el nombre de usuario de Atlassian para un usuario específico."""
+    """Guarda las credenciales de Atlassian para un usuario específico en la BD."""
     if not user_email:
         st.error("No se pueden guardar credenciales sin un email de usuario válido.")
         return
 
-    all_credentials = load_all_user_credentials()
-    
     if api_key and atlassian_username:
-        encrypted_api_val = _encrypt_key(api_key)
-        if encrypted_api_val:
-            all_credentials[user_email] = {
-                "api_key": encrypted_api_val,
-                "username": atlassian_username
-            }
+        success = user_credentials_db.save_credentials(user_email, api_key, atlassian_username)
+        if success:
             logfire.info(f"Credenciales de Atlassian guardadas/actualizadas para {user_email}")
         else:
-            st.error("Hubo un problema al procesar la API Key para guardarla.")
-            return
-    elif user_email in all_credentials: # Si falta alguno de los datos y el usuario existe, bórralo
-        del all_credentials[user_email]
-        logfire.info(f"Credenciales de Atlassian eliminadas para {user_email} por falta de datos.")
-    
-    save_all_user_credentials(all_credentials)
-
+            st.error("Error al guardar las credenciales en la base de datos.")
+    elif user_credentials_db.get_credentials(user_email)[0]:  # Si había credenciales previas
+        success = user_credentials_db.delete_credentials(user_email)
+        if success:
+            logfire.info(f"Credenciales de Atlassian eliminadas para {user_email}")
+        else:
+            st.error("Error al eliminar las credenciales de la base de datos.")
 
 # --- SISTEMA DE AUTENTICACIÓN ---
 def check_authentication():

@@ -56,6 +56,8 @@ cohere==5.15.0
     # via pydantic-ai-slim
 colorama==0.4.6
     # via griffe
+cryptography==45.0.3
+    # via conversational-jira-confluence-agent (manual addition for credential encryption)
 deprecated==1.2.18
     # via
     #   atlassian-python-api
