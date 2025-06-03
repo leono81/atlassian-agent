@@ -6,6 +6,10 @@ from config import settings
 # Nuevas importaciones para BD y cifrado
 from config.user_credentials_db import user_credentials_db
 from config.encryption import credential_encryption
+# NUEVO: Sistema de logging robusto con contexto de usuario
+from config.logging_context import (
+    UserLoggingContext, logger, log_user_action, log_system_event, log_operation
+)
 from ui.agent_wrapper import simple_agent # Importamos nuestro agente simplificado
 from pydantic_ai.messages import UserPromptPart, TextPart, ModelMessage # Para el historial
 from typing import List, Dict
@@ -15,20 +19,39 @@ from ui.custom_styles import apply_custom_title_styles, render_custom_title
 from ui.agent_status_tracker import start_agent_process, render_current_status, track_context_building, track_llm_thinking, track_response_generation, finish_agent_process, status_display
 import json
 from pathlib import Path
+import time
+import uuid
 
-# Configurar Logfire
-logfire.configure(
-    token=settings.LOGFIRE_TOKEN,
-    send_to_logfire="if-token-present",
-    service_name="jira_confluence_agent_ui", 
-    service_version="0.1.0"
-)
-# Marcar como configurado para evitar duplicados
-setattr(logfire, '_configured', True)
+# Configurar Logfire SOLO si no está ya configurado
+def _configure_logfire_if_needed():
+    """Configura Logfire solo si es necesario para evitar logs duplicados"""
+    try:
+        if hasattr(logfire, '_configured') and getattr(logfire, '_configured', False):
+            return
+        
+        if settings.LOGFIRE_TOKEN:
+            logfire.configure(
+                token=settings.LOGFIRE_TOKEN,
+                send_to_logfire="if-token-present",
+                service_name="jira_confluence_agent_ui", 
+                service_version="0.1.0"
+            )
+            # Instrumentación automática avanzada de Logfire
+            logfire.instrument_pydantic_ai()
+            logfire.instrument_httpx()
+            setattr(logfire, '_configured', True)
+            
+            # Log del sistema: aplicación iniciada
+            log_system_event('application_started', 
+                           component='streamlit_ui',
+                           version='0.1.0')
+    except Exception as e:
+        # Si hay error configurando logfire, continuar sin él
+        log_system_event('logfire_configuration_failed', 
+                        severity='warning',
+                        error=str(e))
 
-# No hay logfire.instrument_streamlit() directo.
-# La instrumentación de PydanticAI se hace donde se define el agente.
-# Y las herramientas/clientes se instrumentarían con logfire.instrument_httpx() si fuera necesario.
+_configure_logfire_if_needed()
 
 # Configuración de página y CSS personalizado
 st.set_page_config(
@@ -48,41 +71,73 @@ USER_KEYS_DIR = Path(".streamlit")
 USER_KEYS_FILE = USER_KEYS_DIR / "user_atlassian_keys.json"
 
 # --- FUNCIONES DE CIFRADO (AHORA USANDO MÓDULO REAL) ---
+@log_operation("encrypt_credential")
 def _encrypt_key(api_key: str) -> str:
     """Cifra la API key usando el módulo de cifrado real"""
     return credential_encryption.encrypt(api_key)
 
+@log_operation("decrypt_credential")
 def _decrypt_key(encrypted_key: str) -> str:
     """Descifra la API key usando el módulo de cifrado real"""
     return credential_encryption.decrypt(encrypted_key)
 
 # --- GESTIÓN DE CREDENCIALES DE ATLASSIAN POR USUARIO (AHORA CON BD) ---
+@log_operation("get_user_credentials", log_output=False)  # No loguear credenciales en output
 def get_atlassian_credentials_for_user(user_email: str) -> tuple[str, str]:
     """Obtiene las credenciales de Atlassian para un usuario específico desde la BD."""
     if not user_email:
+        logger.warning("get_credentials_failed", reason="empty_user_email")
         return "", ""
     
-    api_key, atlassian_username = user_credentials_db.get_credentials(user_email)
-    return api_key, atlassian_username
+    try:
+        api_key, atlassian_username = user_credentials_db.get_credentials(user_email)
+        
+        # Log del resultado sin exponer credenciales
+        if api_key and atlassian_username:
+            logger.info("credentials_retrieved_successfully", 
+                       has_api_key=bool(api_key),
+                       has_username=bool(atlassian_username))
+        else:
+            logger.info("no_credentials_found", user_email=user_email)
+            
+        return api_key, atlassian_username
+    except Exception as e:
+        logger.error("credentials_retrieval_failed", error=e, user_email=user_email)
+        return "", ""
 
+@log_operation("save_user_credentials", log_input=False)  # No loguear credenciales en input
 def save_atlassian_credentials_for_user(user_email: str, api_key: str, atlassian_username: str):
     """Guarda las credenciales de Atlassian para un usuario específico en la BD."""
     if not user_email:
+        logger.error("save_credentials_failed", reason="empty_user_email")
         st.error("No se pueden guardar credenciales sin un email de usuario válido.")
         return
 
-    if api_key and atlassian_username:
-        success = user_credentials_db.save_credentials(user_email, api_key, atlassian_username)
-        if success:
-            logfire.info(f"Credenciales de Atlassian guardadas/actualizadas para {user_email}")
-        else:
-            st.error("Error al guardar las credenciales en la base de datos.")
-    elif user_credentials_db.get_credentials(user_email)[0]:  # Si había credenciales previas
-        success = user_credentials_db.delete_credentials(user_email)
-        if success:
-            logfire.info(f"Credenciales de Atlassian eliminadas para {user_email}")
-        else:
-            st.error("Error al eliminar las credenciales de la base de datos.")
+    try:
+        if api_key and atlassian_username:
+            success = user_credentials_db.save_credentials(user_email, api_key, atlassian_username)
+            if success:
+                logger.info("credentials_saved_successfully", 
+                           operation="save",
+                           has_api_key=bool(api_key),
+                           has_username=bool(atlassian_username))
+                log_user_action("credentials_updated", 
+                               credential_type="atlassian")
+            else:
+                logger.error("credentials_save_failed", reason="database_error")
+                st.error("Error al guardar las credenciales en la base de datos.")
+        elif user_credentials_db.get_credentials(user_email)[0]:  # Si había credenciales previas
+            success = user_credentials_db.delete_credentials(user_email)
+            if success:
+                logger.info("credentials_deleted_successfully", operation="delete")
+                log_user_action("credentials_removed", 
+                               credential_type="atlassian")
+            else:
+                logger.error("credentials_delete_failed", reason="database_error")
+                st.error("Error al eliminar las credenciales de la base de datos.")
+    except Exception as e:
+        logger.error("credentials_operation_failed", error=e, operation="save_or_delete")
+        st.error(f"Error al manejar credenciales: {str(e)}")
 
 # --- SISTEMA DE AUTENTICACIÓN ---
 def check_authentication():
@@ -94,9 +149,19 @@ def check_authentication():
     try:
         # Intentar acceder a st.user de forma segura
         if hasattr(st, 'user') and hasattr(st.user, 'is_logged_in') and st.user.is_logged_in:
+            # Usuario autenticado - establecer contexto de logging
+            user_email = getattr(st.user, 'email', 'authenticated_user')
+            _setup_user_logging_context(user_email)
+            log_user_action("authentication_success", 
+                           auth_method="google_oauth",
+                           user_email=user_email)
             return True
     except (AttributeError, KeyError) as e:
         # La autenticación nativa no está configurada o disponible
+        logger.info("authentication_not_configured", 
+                   reason="oauth_not_available",
+                   fallback_mode="demo_user")
+        
         # Mostrar mensaje informativo y permitir acceso sin autenticación
         st.info("ℹ️ **Modo sin autenticación**: La autenticación OAuth2 no está configurada. "
                 "La aplicación funcionará con un usuario por defecto.")
@@ -117,10 +182,16 @@ def check_authentication():
             - 🔐 Acceso seguro
             """)
         
+        # Establecer contexto de logging para usuario demo
+        _setup_user_logging_context("atlassian_agent_user_001")
+        log_user_action("demo_mode_access", auth_method="demo")
+        
         # Permitir continuar sin autenticación
         return True
     
     # Si llegamos aquí, la autenticación está disponible pero el usuario no está logueado
+    logger.info("authentication_required", status="not_logged_in")
+    
     st.markdown("# 🔐 Acceso al Agente Atlassian")
     st.markdown("---")
     
@@ -145,8 +216,10 @@ def check_authentication():
                     use_container_width=True, 
                     type="primary"):
             try:
+                log_user_action("login_attempt", auth_method="google_oauth")
                 st.login()
             except Exception as e:
+                logger.error("login_failed", error=e, auth_method="google_oauth")
                 st.error(f"Error durante el login: {e}")
                 st.info("💡 **Posibles soluciones:**\n"
                        "- Verifica que hayas configurado correctamente Google OAuth2\n"
@@ -157,6 +230,17 @@ def check_authentication():
         st.caption("🔒 Tu privacidad es importante. Solo accedemos a tu email para identificarte.")
     
     return False
+
+def _setup_user_logging_context(user_email: str):
+    """Establece el contexto de logging para el usuario actual."""
+    # Establecer el contexto de usuario para toda la sesión
+    if 'user_logging_context' not in st.session_state:
+        st.session_state.user_logging_context = UserLoggingContext(user_email)
+        st.session_state.user_logging_context.__enter__()
+        
+        logger.info("user_session_started", 
+                   session_id=st.session_state.user_logging_context.session_id,
+                   correlation_id=st.session_state.user_logging_context.correlation_id)
 
 # Verificar autenticación antes de mostrar la app
 if not check_authentication():
@@ -177,6 +261,11 @@ def get_user_info():
     return "atlassian_agent_user_001", "Usuario Demo"
 
 current_user, user_name = get_user_info()
+
+# Log del inicio de sesión de usuario
+log_user_action("session_loaded", 
+               user_name=user_name,
+               user_email=current_user)
 
 # Aplicar estilos personalizados para títulos
 apply_custom_title_styles()
@@ -625,13 +714,32 @@ with chat_container:
 
 # Chat input siempre visible en la parte inferior
 if prompt := st.chat_input("💬 Escribe tu consulta aquí...", key="main_chat"):
+    # Log de la acción del usuario
+    log_user_action("user_query_submitted", 
+                   query_length=len(prompt),
+                   has_context=bool(generar_contexto_completo()),
+                   query_preview=prompt[:100])  # Solo primeros 100 chars por privacidad
+    
     # Agregar mensaje del usuario al historial
     st.session_state.chat_history.append({"role": "user", "content": prompt})
     
     # --- VERIFICACIÓN DE CREDENCIALES ATLASSIAN ANTES DE LLAMAR AL AGENTE ---
     is_atlassian_related_query = any(kw in prompt.lower() for kw in ["atlassian", "jira", "confluence", "issue", "ticket", "página", "espacio"])
     
+    # Log del análisis de la consulta
+    logger.info("query_analysis", 
+               is_atlassian_related=is_atlassian_related_query,
+               has_atlassian_credentials=bool(st.session_state.get("atlassian_api_key") and st.session_state.get("atlassian_username")),
+               query_keywords=[kw for kw in ["atlassian", "jira", "confluence", "issue", "ticket", "página", "espacio"] if kw in prompt.lower()])
+    
     if is_atlassian_related_query and not (st.session_state.get("atlassian_api_key") and st.session_state.get("atlassian_username")):
+        # Log de bloqueo por credenciales faltantes
+        logger.warning("query_blocked_missing_credentials", 
+                      query_type="atlassian_related",
+                      reason="missing_credentials")
+        log_user_action("credentials_required_warning", 
+                       query_type="atlassian")
+        
         with chat_container:
             for message in st.session_state.chat_history:
                 if message["role"] == "user":
@@ -660,8 +768,23 @@ if prompt := st.chat_input("💬 Escribe tu consulta aquí...", key="main_chat")
     contexto_completo = generar_contexto_completo()
     prompt_con_contexto = f"{contexto_completo}\n\n{prompt}" if contexto_completo else prompt
     
+    # Log del contexto generado
+    logger.info("context_preparation", 
+               has_context=bool(contexto_completo),
+               context_length=len(contexto_completo) if contexto_completo else 0,
+               final_prompt_length=len(prompt_con_contexto))
+    
     # Procesar respuesta del agente
+    agent_start_time = time.time()
+    operation_id = str(uuid.uuid4())[:8]
+    
     try:
+        # Log del inicio del procesamiento del agente
+        logger.info("agent_processing_started", 
+                   operation_id=operation_id,
+                   agent_type="pydantic_ai",
+                   framework="streamlit")
+        
         # Paso 1: Iniciar
         start_agent_process("Procesando tu consulta...")
         with status_placeholder:
@@ -672,7 +795,11 @@ if prompt := st.chat_input("💬 Escribe tu consulta aquí...", key="main_chat")
         with status_placeholder:
             render_current_status(status_display)
         
-        with logfire.span("agent_interaction_streamlit", user_prompt=prompt, framework="streamlit"):
+        with logfire.span("agent_interaction_streamlit", 
+                         user_prompt=prompt, 
+                         framework="streamlit",
+                         operation_id=operation_id,
+                         has_context=bool(contexto_completo)):
             # Paso 3: Analizar consulta
             track_llm_thinking()
             with status_placeholder:
@@ -684,6 +811,10 @@ if prompt := st.chat_input("💬 Escribe tu consulta aquí...", key="main_chat")
                 render_current_status(status_display)
             
             # Ejecutar el agente
+            logger.info("agent_execution_starting", 
+                       operation_id=operation_id,
+                       execution_method="asyncio")
+            
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             
@@ -696,18 +827,63 @@ if prompt := st.chat_input("💬 Escribe tu consulta aquí...", key="main_chat")
             # Actualizar historial con los nuevos mensajes del agente
             st.session_state.pydantic_ai_messages.extend(result.new_messages())
         
+        # Calcular duración total
+        agent_duration_ms = (time.time() - agent_start_time) * 1000
+        
         # Reemplazar el estado con la respuesta final
         if result.output:
+            # Log de respuesta exitosa
+            logger.info("agent_response_generated", 
+                       operation_id=operation_id,
+                       response_length=len(result.output),
+                       duration_ms=round(agent_duration_ms, 2),
+                       has_output=True,
+                       model_usage=str(result.usage()) if hasattr(result, 'usage') else None)
+            
+            log_user_action("response_received", 
+                           response_length=len(result.output),
+                           duration_ms=round(agent_duration_ms, 2),
+                           success=True)
+            
             with status_placeholder:
                 st.markdown(result.output)
             st.session_state.chat_history.append({"role": "assistant", "content": result.output})
         else:
+            # Log de respuesta vacía
+            logger.warning("agent_response_empty", 
+                          operation_id=operation_id,
+                          duration_ms=round(agent_duration_ms, 2),
+                          has_output=False)
+            
+            log_user_action("response_received", 
+                           response_length=0,
+                           duration_ms=round(agent_duration_ms, 2),
+                           success=False,
+                           issue="empty_response")
+            
             error_msg = "⚠️ El agente no produjo una respuesta. Intenta reformular tu pregunta."
             with status_placeholder:
                 st.markdown(error_msg)
             st.session_state.chat_history.append({"role": "assistant", "content": error_msg})
             
     except Exception as e:
+        # Calcular duración hasta el fallo
+        agent_duration_ms = (time.time() - agent_start_time) * 1000
+        
+        # Log de error detallado
+        logger.error("agent_processing_failed", 
+                    error=e,
+                    operation_id=operation_id,
+                    duration_ms=round(agent_duration_ms, 2),
+                    error_type=type(e).__name__,
+                    query_preview=prompt[:100])
+        
+        log_user_action("response_received", 
+                       duration_ms=round(agent_duration_ms, 2),
+                       success=False,
+                       error_type=type(e).__name__,
+                       issue="processing_error")
+        
         error_message = f"❌ **Error:** {str(e)}\n\n💡 **Sugerencias:**\n- Verifica que el modelo esté funcionando correctamente\n- Intenta simplificar tu consulta\n- Revisa la configuración del contexto de memoria"
         with status_placeholder:
             st.markdown(error_message)

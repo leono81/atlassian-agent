@@ -13,6 +13,8 @@ from pydantic.fields import FieldInfo
 
 from agent_core.jira_instances import get_jira_client
 import logfire
+# NUEVO: Importar sistema de logging estructurado
+from config.logging_context import logger, log_operation, log_user_action
 # from tools.date_utils import parse_relative_date, get_weekday_name  # Comentado temporalmente
 
 class JiraIssue(BaseModel):
@@ -161,6 +163,7 @@ def _clean_field_info_param(param_value: Any) -> Any:
         return None
     return param_value
 
+@log_operation("jira_search_issues", log_input=True, log_output=False)
 async def search_issues(
     jql_query: str = Field(..., description="La consulta JQL para buscar issues. Ejemplo: 'project = \"PROJ\" AND status = Open ORDER BY priority DESC'"),
     max_results: int = 10,
@@ -180,46 +183,81 @@ async def search_issues(
             if session_username and session_api_key:
                 atlassian_username = session_username
                 atlassian_api_key = session_api_key
-                logfire.debug(f"{current_function_name}: Using Atlassian credentials from st.session_state for user {atlassian_username}")
+                logger.debug("credentials_loaded_from_session", 
+                           atlassian_username=atlassian_username,
+                           credential_source="session_state")
             else:
-                logfire.warn(f"{current_function_name}: st.session_state exists but credentials are empty - username: '{session_username}', api_key: {'***' if session_api_key else 'None'}")
+                logger.warning("session_credentials_empty", 
+                             has_username=bool(session_username),
+                             has_api_key=bool(session_api_key))
         else:
-            logfire.warn(f"{current_function_name}: st.session_state or credentials not found in session_state")
+            logger.warning("session_state_unavailable", 
+                         reason="streamlit_session_not_found")
             
     except ImportError:
-        logfire.warn(f"{current_function_name}: Streamlit not available. Cannot fetch credentials from session_state.")
+        logger.warning("streamlit_not_available", 
+                     reason="import_error",
+                     fallback="using_provided_credentials")
     except Exception as e:
-        logfire.error(f"{current_function_name}: Error accessing st.session_state: {e}", exc_info=True)
+        logger.error("session_access_failed", error=e)
 
     actual_max_results = min(max(1, max_results), 100)
-    logfire.info("Ejecutando search_issues con JQL: {jql_query}, max_results: {max_results}, user: {user}",
-                 jql_query=jql_query, max_results=actual_max_results, user=atlassian_username)
+    
+    # Log del inicio de búsqueda con contexto estructurado
+    logger.info("jira_search_initiated", 
+               jql_preview=jql_query[:200],  # Primeros 200 chars para evitar logs muy largos
+               max_results=actual_max_results,
+               has_credentials=bool(atlassian_username and atlassian_api_key))
+    
     try:
         jira = get_jira_client(username=atlassian_username, api_key=atlassian_api_key)
         loop = asyncio.get_running_loop()
-        with logfire.span("jira.jql_search", jql=jql_query, limit=actual_max_results):
-            issues_raw = await loop.run_in_executor(None, lambda: jira.jql(jql_query, limit=actual_max_results))
-        issues_found: List[JiraIssue] = []
-        if issues_raw and issues_raw.get("issues"):
-            for issue_data in issues_raw["issues"]:
-                fields = issue_data.get("fields", {})
-                assignee_info = fields.get("assignee")
-                reporter_info = fields.get("reporter")
-                issues_found.append(
-                    JiraIssue(
-                        key=issue_data.get("key"),
-                        summary=fields.get("summary"),
-                        status=fields.get("status", {}).get("name"),
-                        assignee=assignee_info.get("displayName") if assignee_info else None,
-                        reporter=reporter_info.get("displayName") if reporter_info else None,
-                        duedate=fields.get("duedate")  # Nueva línea para poblar la fecha de vencimiento
-                    )
-                )
-        logfire.info("search_issues encontró {count} issues.", count=len(issues_found))
-        return issues_found
+        
+        with logfire.span("jira.jql_search", 
+                         jql=jql_query, 
+                         limit=actual_max_results,
+                         username=atlassian_username):
+            issues_data = await loop.run_in_executor(None, 
+                lambda: jira.search_issues(jql_query, maxResults=actual_max_results, fields="summary,status,assignee,reporter,duedate"))
+        
+        results = []
+        for issue in issues_data:
+            results.append(JiraIssue(
+                key=issue.key,
+                summary=issue.fields.summary,
+                status=issue.fields.status.name if issue.fields.status else None,
+                assignee=issue.fields.assignee.displayName if issue.fields.assignee else None,
+                reporter=issue.fields.reporter.displayName if issue.fields.reporter else None,
+                duedate=str(issue.fields.duedate) if issue.fields.duedate else None
+            ))
+        
+        # Log del resultado exitoso
+        logger.info("jira_search_completed",
+                   results_count=len(results),
+                   search_successful=True,
+                   jql_hash=hash(jql_query))  # Hash para poder correlacionar sin exponer la query completa
+        
+        # Log de acción del usuario
+        log_user_action("jira_search_executed",
+                       service="jira",
+                       results_count=len(results),
+                       query_type="jql")
+        
+        return results
+        
     except Exception as e:
-        logfire.error("Error en search_issues: {error_message}", error_message=str(e), exc_info=True)
-        return [JiraIssue(key="ERROR", summary=f"Error al buscar issues: {str(e)}")]
+        # Log de error estructurado
+        logger.error("jira_search_failed",
+                    error=e,
+                    error_type=type(e).__name__,
+                    jql_hash=hash(jql_query),
+                    has_credentials=bool(atlassian_username and atlassian_api_key))
+        
+        log_user_action("jira_search_failed",
+                       service="jira",
+                       error_type=type(e).__name__,
+                       query_type="jql")
+        raise
 
 async def get_issue_details(
     issue_key: str = Field(..., description="La clave del issue (ej. 'PROJ-123')."),
@@ -277,6 +315,7 @@ async def get_issue_details(
                       issue_key=issue_key, error_message=str(e), exc_info=True)
         return JiraIssueDetails(key=issue_key, summary=f"Error al obtener detalles: {str(e)}", status="ERROR")
 
+@log_operation("jira_add_comment", log_input=False, log_output=False)  # No loguear contenido por privacidad
 async def add_comment_to_jira_issue(
     issue_key: str = Field(..., description="La clave del issue al que añadir el comentario (ej. 'PROJ-123')."),
     comment_body: str = Field(..., description="El contenido del comentario."),
@@ -292,43 +331,89 @@ async def add_comment_to_jira_issue(
                "atlassian_api_key" in st.session_state and st.session_state.atlassian_api_key:
                 atlassian_username = st.session_state.atlassian_username
                 atlassian_api_key = st.session_state.atlassian_api_key
-                logfire.debug(f"{current_function_name}: Using Atlassian credentials from st.session_state for user {atlassian_username}.")
+                logger.debug("credentials_loaded_from_session", 
+                           atlassian_username=atlassian_username,
+                           credential_source="session_state")
             else:
-                logfire.warn(
-                    f"{current_function_name}: Atlassian credentials not found or incomplete in st.session_state. "
-                    f"Username present: {'atlassian_username' in st.session_state and bool(st.session_state.atlassian_username)}. "
-                    f"API key present: {'atlassian_api_key' in st.session_state and bool(st.session_state.atlassian_api_key)}."
-                )
+                logger.warning("session_credentials_incomplete",
+                             has_username=bool('atlassian_username' in st.session_state and st.session_state.atlassian_username),
+                             has_api_key=bool('atlassian_api_key' in st.session_state and st.session_state.atlassian_api_key))
         except ImportError:
-            logfire.warn(f"{inspect.currentframe().f_code.co_name}: Streamlit not available. Cannot fetch credentials from session_state.")
+            logger.warning("streamlit_not_available", 
+                         reason="import_error",
+                         fallback="using_provided_credentials")
         except Exception as e:
-            logfire.warn(f"{inspect.currentframe().f_code.co_name}: Could not get credentials from st.session_state: {e}")
+            logger.error("session_access_failed", error=e)
 
-    logfire.info("Intentando añadir comentario al issue: {issue_key}, user: {user}", 
-                 issue_key=issue_key, user=atlassian_username)
+    # Log del inicio de la operación de comentario
+    logger.info("jira_comment_initiated",
+               issue_key=issue_key,
+               comment_length=len(comment_body),
+               has_credentials=bool(atlassian_username and atlassian_api_key))
+    
     try:
         jira = get_jira_client(username=atlassian_username, api_key=atlassian_api_key) # Modified
         loop = asyncio.get_running_loop()
-        with logfire.span("jira.add_comment_to_issue", issue_key=issue_key):
+        
+        with logfire.span("jira.add_comment_to_issue", 
+                         issue_key=issue_key,
+                         comment_length=len(comment_body),
+                         username=atlassian_username):
             comment_data_dict = await loop.run_in_executor(None, jira.issue_add_comment, issue_key, comment_body)
+        
         if not isinstance(comment_data_dict, dict) or 'id' not in comment_data_dict:
-            logfire.error("Respuesta inesperada de jira.issue_add_comment: {response_data}", response_data=comment_data_dict)
+            logger.error("jira_api_unexpected_response",
+                        response_type=type(comment_data_dict).__name__,
+                        has_id=('id' in comment_data_dict if isinstance(comment_data_dict, dict) else False),
+                        issue_key=issue_key)
+            
+            log_user_action("jira_comment_failed",
+                           service="jira",
+                           issue_key=issue_key,
+                           error_type="unexpected_response")
+            
             return JiraComment(id="ERROR", body=f"Respuesta inesperada de la API de Jira al añadir comentario.")
+        
         author_info = comment_data_dict.get("author", {})
         raw_body = comment_data_dict.get('body')
         comment_text = raw_body 
+        
         created_comment = JiraComment(
             id=comment_data_dict['id'],
             body=comment_text, 
             author=author_info.get('displayName'),
             created=comment_data_dict.get('created')
         )
-        logfire.info("Comentario añadido exitosamente al issue {issue_key}, ID comentario: {comment_id}",
-                     issue_key=issue_key, comment_id=created_comment.id)
+        
+        # Log de éxito
+        logger.info("jira_comment_added_successfully",
+                   issue_key=issue_key,
+                   comment_id=created_comment.id,
+                   author=created_comment.author,
+                   comment_length=len(comment_body))
+        
+        log_user_action("jira_comment_added",
+                       service="jira",
+                       issue_key=issue_key,
+                       comment_id=created_comment.id,
+                       comment_length=len(comment_body))
+        
         return created_comment
+        
     except Exception as e:
-        logfire.error("Error al añadir comentario al issue {issue_key}: {error_message}", 
-                      issue_key=issue_key, error_message=str(e), exc_info=True)
+        # Log de error detallado
+        logger.error("jira_comment_failed",
+                    error=e,
+                    error_type=type(e).__name__,
+                    issue_key=issue_key,
+                    comment_length=len(comment_body),
+                    has_credentials=bool(atlassian_username and atlassian_api_key))
+        
+        log_user_action("jira_comment_failed",
+                       service="jira",
+                       issue_key=issue_key,
+                       error_type=type(e).__name__)
+        
         return JiraComment(id="ERROR", body=f"Error al añadir comentario: {str(e)}")
 
 def _parse_time_spent_to_seconds(time_str_param: Any) -> int: # Cambiado a Any para manejar FieldInfo

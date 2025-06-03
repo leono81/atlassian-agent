@@ -428,3 +428,5 @@ wrapt==1.17.2
     #   opentelemetry-instrumentation
 zipp==3.22.0
     # via importlib-metadata
+psutil==5.9.5
+    # via streamlit

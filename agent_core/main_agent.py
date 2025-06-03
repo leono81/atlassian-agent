@@ -10,6 +10,10 @@ from pydantic_ai.messages import ToolReturnPart
 from agent_core.jira_instances import check_jira_connection
 from agent_core.confluence_instances import check_confluence_connection
 
+# NUEVO: Sistema de logging e instrumentación avanzada
+from config.logging_context import logger, log_operation, log_system_event
+from config.logfire_instrumentation import get_instrumentation, setup_application_monitoring
+
 # Importar las funciones de herramientas
 from tools.jira_tools import (
     search_issues as jira_search_issues_tool_func,
@@ -46,29 +50,37 @@ from tools.mem0_tools import save_memory as save_memory_tool_func, search_memory
 # Nueva herramienta de formato
 from tools.formatting_tools import format_jira_issues_for_markdown as format_jira_issues_tool_func
 
-# Configuración condicional de Logfire para evitar duplicados
-def _configure_logfire_if_needed():
-    """Configura Logfire solo si es necesario para evitar logs duplicados"""
+# Configuración avanzada de Logfire (reemplaza la configuración anterior)
+def _configure_advanced_logfire():
+    """Configura Logfire con instrumentación avanzada para el agente principal"""
     try:
-        # Verificar si ya está configurado comprobando si hay un token
-        if hasattr(logfire, '_configured') and getattr(logfire, '_configured', False):
+        # Verificar si ya está configurado para evitar duplicados
+        if hasattr(logfire, '_agent_configured') and getattr(logfire, '_agent_configured', False):
             return
         
-        if settings.LOGFIRE_TOKEN:
-            logfire.configure(
-                token=settings.LOGFIRE_TOKEN,
-                send_to_logfire="if-token-present",
-                service_name="jira_confluence_agent",
-                service_version="0.1.0"
-            )
-            logfire.instrument_pydantic_ai()
-            logfire.instrument_pydantic()
-            setattr(logfire, '_configured', True)
-    except Exception:
-        # Si hay error configurando logfire, continuar sin él
-        pass
+        # Usar la instrumentación avanzada
+        instrumentation = get_instrumentation()
+        
+        # Configurar monitoreo de aplicación si no está ya activo
+        try:
+            setup_application_monitoring()
+        except Exception as e:
+            logger.warning("application_monitoring_setup_failed", error=e)
+        
+        # Marcar como configurado para evitar duplicados
+        setattr(logfire, '_agent_configured', True)
+        
+        logger.info("advanced_logfire_configured", 
+                   component="main_agent",
+                   service_name="atlassian_agent_multi_user")
+        
+    except Exception as e:
+        log_system_event("logfire_agent_configuration_failed", 
+                        severity="warning",
+                        error=str(e),
+                        component="main_agent")
 
-_configure_logfire_if_needed()
+_configure_advanced_logfire()
 
 # --- Definición de Herramientas para PydanticAI ---
 # Jira Tools
