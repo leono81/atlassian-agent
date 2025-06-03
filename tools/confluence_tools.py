@@ -70,14 +70,27 @@ class CreatedConfluencePage(BaseModel):
 async def search_confluence_pages(
     query: str = Field(..., description="Término de búsqueda o consulta CQL. Ejemplo CQL: 'space = \"DOCS\" AND title ~ \"tutorial\"'"),
     space_key: Optional[str] = Field(default=None, description="Clave del espacio para limitar la búsqueda (opcional)."),
-    max_results: int = 5
+    max_results: int = 5,
+    atlassian_username: Optional[str] = None,
+    atlassian_api_key: Optional[str] = None
 ) -> List[ConfluencePage]:
+    if atlassian_username is None and atlassian_api_key is None:
+        try:
+            import streamlit as st
+            if "atlassian_username" in st.session_state and "atlassian_api_key" in st.session_state:
+                atlassian_username = st.session_state.atlassian_username
+                atlassian_api_key = st.session_state.atlassian_api_key
+                logfire.debug("search_confluence_pages: Using Atlassian credentials from st.session_state.")
+        except ImportError:
+            logfire.warn("search_confluence_pages: Streamlit not available. Cannot fetch credentials from session_state.")
+        except Exception as e:
+            logfire.warn(f"search_confluence_pages: Could not get credentials from st.session_state: {e}")
+
     actual_max_results = min(max(1, max_results), 50)
-    logfire.info("Ejecutando search_confluence_pages con query: {query}, space: {space_key}, limit: {limit}",
-                 query=query, space_key=space_key, limit=actual_max_results)
-    # ... (resto del código de search_confluence_pages)
+    logfire.info("Ejecutando search_confluence_pages con query: {query}, space: {space_key}, limit: {limit}, user: {user}",
+                 query=query, space_key=space_key, limit=actual_max_results, user=atlassian_username)
     try:
-        confluence = get_confluence_client()
+        confluence = get_confluence_client(username=atlassian_username, api_key=atlassian_api_key)
         loop = asyncio.get_running_loop()
         
         is_cql = " = " in query or " ~ " in query or " order by " in query.lower() 
@@ -139,12 +152,26 @@ async def search_confluence_pages(
 
 
 async def get_confluence_page_content(
-    page_id: str = Field(..., description="El ID de la página de Confluence.")
+    page_id: str = Field(..., description="El ID de la página de Confluence."),
+    atlassian_username: Optional[str] = None,
+    atlassian_api_key: Optional[str] = None
 ) -> ConfluencePageDetails:
-    logfire.info("Ejecutando get_confluence_page_content para page_id: {page_id}", page_id=page_id)
-    # ... (resto del código de get_confluence_page_content)
+    if atlassian_username is None and atlassian_api_key is None:
+        try:
+            import streamlit as st
+            if "atlassian_username" in st.session_state and "atlassian_api_key" in st.session_state:
+                atlassian_username = st.session_state.atlassian_username
+                atlassian_api_key = st.session_state.atlassian_api_key
+                logfire.debug("get_confluence_page_content: Using Atlassian credentials from st.session_state.")
+        except ImportError:
+            logfire.warn("get_confluence_page_content: Streamlit not available. Cannot fetch credentials from session_state.")
+        except Exception as e:
+            logfire.warn(f"get_confluence_page_content: Could not get credentials from st.session_state: {e}")
+
+    logfire.info("Ejecutando get_confluence_page_content para page_id: {page_id}, user: {user}", 
+                 page_id=page_id, user=atlassian_username)
     try:
-        confluence = get_confluence_client()
+        confluence = get_confluence_client(username=atlassian_username, api_key=atlassian_api_key)
         loop = asyncio.get_running_loop()
         with logfire.span("confluence.page_content", page_id=page_id):
             page_data = await loop.run_in_executor(None, lambda: confluence.get_page_by_id(page_id, expand="body.storage,space,version,history.lastUpdated,history.createdBy,_links.webui"))
@@ -185,12 +212,26 @@ async def create_confluence_page(
     space_key: str = Field(..., description="La clave del espacio donde crear la página (ej. 'DOCS')."),
     title: str = Field(..., description="El título de la nueva página."),
     body_content_storage: str = Field(..., description="El contenido de la página en formato de almacenamiento de Confluence (XHTML)."),
-    parent_id: Optional[str] = Field(default=None, description="ID de la página padre bajo la cual crear esta página (opcional).")
+    parent_id: Optional[str] = Field(default=None, description="ID de la página padre bajo la cual crear esta página (opcional)."),
+    atlassian_username: Optional[str] = None,
+    atlassian_api_key: Optional[str] = None
 ) -> CreatedConfluencePage:
-    logfire.info("Intentando crear página en espacio {space_key} con título: '{title}'",
-                 space_key=space_key, title=title)
+    if atlassian_username is None and atlassian_api_key is None:
+        try:
+            import streamlit as st
+            if "atlassian_username" in st.session_state and "atlassian_api_key" in st.session_state:
+                atlassian_username = st.session_state.atlassian_username
+                atlassian_api_key = st.session_state.atlassian_api_key
+                logfire.debug("create_confluence_page: Using Atlassian credentials from st.session_state.")
+        except ImportError:
+            logfire.warn("create_confluence_page: Streamlit not available. Cannot fetch credentials from session_state.")
+        except Exception as e:
+            logfire.warn(f"create_confluence_page: Could not get credentials from st.session_state: {e}")
+
+    logfire.info("Intentando crear página en espacio {space_key} con título: '{title}', user: {user}",
+                 space_key=space_key, title=title, user=atlassian_username)
     try:
-        confluence = get_confluence_client()
+        confluence = get_confluence_client(username=atlassian_username, api_key=atlassian_api_key)
         loop = asyncio.get_running_loop()
 
         # --- CORRECCIÓN para parent_id ---
@@ -253,11 +294,30 @@ async def update_confluence_page_content(
     page_id: str = Field(..., description="El ID de la página de Confluence a actualizar."),
     new_title: Optional[str] = Field(default=None, description="El nuevo título para la página (opcional)."),
     new_body_content_storage: str = Field(..., description="El nuevo contenido completo de la página en formato de almacenamiento (XHTML)."),
-    new_version_comment: Optional[str] = Field(default=None, description="Comentario para la nueva versión (opcional).")
+    new_version_comment: Optional[str] = Field(default=None, description="Comentario para la nueva versión (opcional)."),
+    atlassian_username: Optional[str] = None,
+    atlassian_api_key: Optional[str] = None
 ) -> CreatedConfluencePage:
-    logfire.info("Intentando actualizar contenido de la página ID: {page_id}", page_id=page_id)
+    if atlassian_username is None and atlassian_api_key is None:
+        try:
+            import streamlit as st
+            if "atlassian_username" in st.session_state and "atlassian_api_key" in st.session_state:
+                atlassian_username = st.session_state.atlassian_username
+                atlassian_api_key = st.session_state.atlassian_api_key
+                logfire.debug("update_confluence_page_content: Using Atlassian credentials from st.session_state.")
+        except ImportError:
+            logfire.warn("update_confluence_page_content: Streamlit not available. Cannot fetch credentials from session_state.")
+        except Exception as e:
+            logfire.warn(f"update_confluence_page_content: Could not get credentials from st.session_state: {e}")
+            
+    logfire.info(
+        "Intentando actualizar página ID {page_id} con nuevo título '{new_title}', user: {user}",
+        page_id=page_id,
+        new_title=new_title,
+        user=atlassian_username
+    )
     try:
-        confluence = get_confluence_client()
+        confluence = get_confluence_client(username=atlassian_username, api_key=atlassian_api_key)
         loop = asyncio.get_running_loop()
 
         # --- CORRECCIÓN para new_title y new_version_comment si son FieldInfo ---

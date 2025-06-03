@@ -10,6 +10,8 @@ from tools.mem0_tools import search_memory, save_memory, precargar_memoria_compl
 from datetime import datetime
 from ui.custom_styles import apply_custom_title_styles, render_custom_title
 from ui.agent_status_tracker import start_agent_process, render_current_status, track_context_building, track_llm_thinking, track_response_generation, finish_agent_process, status_display
+import json
+from pathlib import Path
 
 # Configurar Logfire
 logfire.configure(
@@ -34,6 +36,140 @@ st.set_page_config(
 st.markdown("""
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 """, unsafe_allow_html=True)
+
+# --- CONSTANTES PARA API KEYS DE ATLASSIAN POR USUARIO ---
+USER_KEYS_DIR = Path(".streamlit")
+USER_KEYS_FILE = USER_KEYS_DIR / "user_atlassian_keys.json"
+
+# --- FUNCIONES DE CIFRADO (PLACEHOLDERS - IMPLEMENTAR CIFRADO REAL) ---
+def _encrypt_key(api_key: str) -> str:
+    """
+    Placeholder para cifrar la API key.
+    !!! IMPORTANTE: Reemplazar con un mecanismo de cifrado robusto. !!!
+    """
+    if not api_key:
+        return ""
+    return f"PLAINTEXT_NEEDS_ENCRYPTION:{api_key}"
+
+def _decrypt_key(encrypted_key: str) -> str:
+    """
+    Placeholder para descifrar la API key.
+    !!! IMPORTANTE: Reemplazar con el mecanismo de cifrado correspondiente. !!!
+    """
+    if not encrypted_key:
+        return ""
+    if encrypted_key.startswith("PLAINTEXT_NEEDS_ENCRYPTION:"):
+        return encrypted_key.split(":", 1)[1]
+    return ""
+
+# --- GESTIÓN DE CREDENCIALES DE ATLASSIAN POR USUARIO ---
+# La estructura en JSON será: { "user_google_email": { "api_key": "encrypted_api_key", "username": "atlassian_username" } }
+def _ensure_user_keys_file_exists():
+    """Asegura que el directorio y el archivo de credenciales de usuario existan."""
+    try:
+        USER_KEYS_DIR.mkdir(exist_ok=True)
+        if not USER_KEYS_FILE.exists():
+            with open(USER_KEYS_FILE, 'w') as f:
+                json.dump({}, f)
+            logfire.info(f"Creado archivo de credenciales de usuario: {USER_KEYS_FILE}")
+    except Exception as e:
+        logfire.error(f"Error asegurando archivo de credenciales de usuario: {e}", exc_info=True)
+
+def load_all_user_credentials() -> dict:
+    """Carga todas las credenciales de Atlassian de los usuarios desde el archivo JSON."""
+    _ensure_user_keys_file_exists()
+    try:
+        with open(USER_KEYS_FILE, 'r') as f:
+            data = json.load(f)
+        
+        cleaned_data = {}
+        if isinstance(data, dict): # Ensure 'data' itself is a dictionary
+            for email, creds in data.items():
+                if isinstance(creds, dict):
+                    cleaned_data[email] = creds
+                else:
+                    # Log a warning and skip this malformed entry
+                    logfire.warn(
+                        f"Datos de credenciales malformados para el usuario '{email}' en '{USER_KEYS_FILE}'. "
+                        f"Se esperaba un diccionario, pero se obtuvo {type(creds)}. "
+                        "Las credenciales de este usuario serán ignoradas. Por favor, guárdelas de nuevo mediante la interfaz."
+                    )
+        else:
+            # The entire file content is not a dictionary, this is a more severe corruption
+            logfire.error(
+                f"El archivo de credenciales '{USER_KEYS_FILE}' no contiene un JSON de tipo diccionario válido. "
+                f"Se obtuvo {type(data)}. Se tratará como si no hubiera credenciales guardadas. "
+                "Considere revisar o eliminar el archivo."
+            )
+            # Attempt to ensure a valid empty file structure for next time if corruption was severe.
+            # This might re-create the file with an empty JSON object if it was completely unparsable or not a dict.
+            USER_KEYS_DIR.mkdir(exist_ok=True) # Ensure directory exists
+            with open(USER_KEYS_FILE, 'w') as f:
+                json.dump({}, f)
+            logfire.info(f"Archivo de credenciales '{USER_KEYS_FILE}' reiniciado a un diccionario vacío debido a corrupción severa.")
+
+
+        return cleaned_data
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        logfire.warn(f"No se pudo cargar o decodificar el archivo de credenciales ({USER_KEYS_FILE}): {e}. Retornando dict vacío.")
+        _ensure_user_keys_file_exists() # Ensures file exists for next time, potentially creating it empty
+        return {}
+    except Exception as e: # Catch any other unexpected errors during loading/cleaning
+        logfire.error(f"Error inesperado al cargar las credenciales de usuario desde {USER_KEYS_FILE}: {e}", exc_info=True)
+        _ensure_user_keys_file_exists() # Attempt to ensure a valid empty file for safety
+        return {}
+
+def save_all_user_credentials(user_credentials_data: dict):
+    """Guarda todas las credenciales de Atlassian de los usuarios en el archivo JSON."""
+    _ensure_user_keys_file_exists()
+    try:
+        with open(USER_KEYS_FILE, 'w') as f:
+            json.dump(user_credentials_data, f, indent=4)
+        logfire.info(f"Datos de credenciales de usuario guardados en: {USER_KEYS_FILE}")
+    except Exception as e:
+        logfire.error(f"Error guardando archivo de credenciales ({USER_KEYS_FILE}): {e}", exc_info=True)
+        st.error("Error al guardar la configuración de credenciales de Atlassian.")
+
+def get_atlassian_credentials_for_user(user_email: str) -> tuple[str, str]:
+    """Obtiene y descifra la API key y el nombre de usuario de Atlassian para un usuario específico."""
+    if not user_email:
+        return "", ""
+    all_credentials = load_all_user_credentials()
+    user_data = all_credentials.get(user_email, {})
+    encrypted_api_key = user_data.get("api_key")
+    atlassian_username = user_data.get("username", "")
+    
+    api_key = ""
+    if encrypted_api_key:
+        api_key = _decrypt_key(encrypted_api_key)
+        
+    return api_key, atlassian_username
+
+def save_atlassian_credentials_for_user(user_email: str, api_key: str, atlassian_username: str):
+    """Cifra y guarda la API key y el nombre de usuario de Atlassian para un usuario específico."""
+    if not user_email:
+        st.error("No se pueden guardar credenciales sin un email de usuario válido.")
+        return
+
+    all_credentials = load_all_user_credentials()
+    
+    if api_key and atlassian_username:
+        encrypted_api_val = _encrypt_key(api_key)
+        if encrypted_api_val:
+            all_credentials[user_email] = {
+                "api_key": encrypted_api_val,
+                "username": atlassian_username
+            }
+            logfire.info(f"Credenciales de Atlassian guardadas/actualizadas para {user_email}")
+        else:
+            st.error("Hubo un problema al procesar la API Key para guardarla.")
+            return
+    elif user_email in all_credentials: # Si falta alguno de los datos y el usuario existe, bórralo
+        del all_credentials[user_email]
+        logfire.info(f"Credenciales de Atlassian eliminadas para {user_email} por falta de datos.")
+    
+    save_all_user_credentials(all_credentials)
+
 
 # --- SISTEMA DE AUTENTICACIÓN ---
 def check_authentication():
@@ -513,6 +649,17 @@ if "usar_contexto_memoria" not in st.session_state:
 # Ejecutar precarga de memoria una sola vez
 precargar_memoria_usuario()
 
+# --- INICIALIZACIÓN DE CREDENCIALES DE ATLASSIAN EN SESSION STATE ---
+if "atlassian_api_key" not in st.session_state or "atlassian_username" not in st.session_state:
+    api_key, atl_username = get_atlassian_credentials_for_user(current_user)
+    st.session_state.atlassian_api_key = api_key
+    st.session_state.atlassian_username = atl_username
+    
+    if api_key and atl_username:
+        logfire.info(f"Credenciales de Atlassian (key y username) cargadas en sesión para {current_user}")
+    else:
+        logfire.info(f"No se encontraron credenciales de Atlassian persistentes completas para {current_user}.")
+
 # --- INTERFAZ PRINCIPAL DEL CHAT ---
 # Títulos compactos en la parte superior
 st.markdown(f"""
@@ -549,6 +696,20 @@ if prompt := st.chat_input("💬 Escribe tu consulta aquí...", key="main_chat")
     # Agregar mensaje del usuario al historial
     st.session_state.chat_history.append({"role": "user", "content": prompt})
     
+    # --- VERIFICACIÓN DE CREDENCIALES ATLASSIAN ANTES DE LLAMAR AL AGENTE ---
+    is_atlassian_related_query = any(kw in prompt.lower() for kw in ["atlassian", "jira", "confluence", "issue", "ticket", "página", "espacio"])
+    
+    if is_atlassian_related_query and not (st.session_state.get("atlassian_api_key") and st.session_state.get("atlassian_username")):
+        with chat_container:
+            for message in st.session_state.chat_history:
+                if message["role"] == "user":
+                    with st.chat_message("user", avatar="👤"):
+                        st.markdown(message["content"])
+                # No debería haber mensajes de assistant aquí aún si el historial se maneja correctamente
+            with st.chat_message("assistant", avatar="🤖"):
+                st.warning("⚠️ Para consultas sobre Atlassian (Jira/Confluence), por favor configura tu API Key Y tu Nombre de Usuario de Atlassian en la barra lateral.")
+                st.stop()
+
     # Mostrar inmediatamente la pregunta del usuario en el chat
     with chat_container:
         for message in st.session_state.chat_history:
@@ -865,3 +1026,76 @@ with st.sidebar:
         <span style="font-size: 10px !important;">v0.1.0 beta</span>
     </div>
     """, unsafe_allow_html=True)
+
+# --- CONFIGURACIÓN DE ATLASSIAN API KEY ---
+st.sidebar.subheader("🔑 Configuración Atlassian") # Título generalizado
+
+# Este estado refleja si las credenciales están en la SESIÓN ACTUAL
+if st.session_state.get("atlassian_api_key") and st.session_state.get("atlassian_username"):
+    st.sidebar.success("Credenciales de Atlassian configuradas para esta sesión.")
+elif st.session_state.get("atlassian_api_key"):
+    st.sidebar.warning("Falta el nombre de usuario de Atlassian.")
+elif st.session_state.get("atlassian_username"):
+    st.sidebar.warning("Falta la API Key de Atlassian.")
+else:
+    st.sidebar.error("Credenciales de Atlassian NO configuradas.")
+
+with st.sidebar.popover("Gestionar Credenciales de Atlassian", use_container_width=True):
+    st.markdown("#### Tus Credenciales de Atlassian")
+    st.markdown(
+        """
+        Ingresa tu API key personal y tu nombre de usuario de Atlassian.
+        Se guardarán de forma persistente para futuras sesiones.
+        
+        **Importante:** El cifrado de la API Key es un *placeholder*. Implementa cifrado robusto.
+        El nombre de usuario se guarda como texto plano.
+        """
+    )
+
+    key_for_input = st.session_state.get("atlassian_api_key", "")
+    username_for_input = st.session_state.get("atlassian_username", "")
+    
+    new_api_key_input = st.text_input(
+        "Tu Atlassian API Key:",
+        type="password",
+        value=key_for_input,
+        placeholder="Pega tu API key aquí"
+    )
+    
+    new_username_input = st.text_input(
+        "Tu Nombre de Usuario Atlassian (email):",
+        value=username_for_input,
+        placeholder="ej: tu.email@dominio.com"
+    )
+
+    col_save, col_clear = st.columns(2)
+    with col_save:
+        if st.button("💾 Guardar Credenciales", use_container_width=True, type="primary"):
+            if new_api_key_input and new_username_input:
+                save_atlassian_credentials_for_user(current_user, new_api_key_input, new_username_input)
+                st.session_state.atlassian_api_key = new_api_key_input
+                st.session_state.atlassian_username = new_username_input
+                st.success("¡Credenciales guardadas!")
+                logfire.info(f"Credenciales de Atlassian guardadas/actualizadas por {current_user}")
+                st.rerun()
+            else:
+                st.warning("Ingresa API Key y Nombre de Usuario.")
+    
+    with col_clear:
+        if st.button("🗑️ Borrar Guardadas", use_container_width=True):
+            save_atlassian_credentials_for_user(current_user, "", "") # Guardar vacío borra
+            st.session_state.atlassian_api_key = ""
+            st.session_state.atlassian_username = ""
+            st.info("Credenciales eliminadas de persistencia.")
+            logfire.info(f"Credenciales de Atlassian eliminadas por {current_user}")
+            st.rerun()
+
+    st.markdown("---")
+    # Verifica directamente de persistencia para el mensaje
+    _, stored_username = get_atlassian_credentials_for_user(current_user) 
+    if stored_username: # Si hay username, asumimos que hay (o hubo) key
+        st.caption("ℹ️ Ya tienes credenciales guardadas. Ingresar nuevas las reemplazará.")
+    else:
+        st.caption("ℹ️ Aún no has guardado credenciales.")
+        
+st.sidebar.markdown("---")

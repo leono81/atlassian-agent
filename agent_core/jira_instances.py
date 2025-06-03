@@ -1,6 +1,7 @@
 from atlassian import Jira
 from config import settings
 import logfire
+from typing import Optional
 
 # Aunque ya configuramos Logfire en ui/app.py, si este módulo se importa
 # antes o se usa en un contexto sin Streamlit (ej. tests), es bueno tenerlo.
@@ -15,41 +16,51 @@ logfire.configure(
 # logfire.instrument_httpx() # Descomentar si es necesario y se ha instalado httpx explícitamente.
 
 # --- JIRA Client Instance ---
-_jira_client = None
+# _jira_client = None # Eliminamos el singleton global
 
-def get_jira_client() -> Jira:
+def get_jira_client(username: Optional[str] = None, api_key: Optional[str] = None) -> Jira:
     """
     Retorna una instancia inicializada y autenticada del cliente Jira.
-    Utiliza un patrón singleton simple para evitar reinicializaciones.
+    Si se proveen username y api_key, se usan esas credenciales.
+    De lo contrario, recurre a las configuraciones globales en settings.
     """
-    global _jira_client
-    if _jira_client is None:
-        if not all([settings.JIRA_URL, settings.JIRA_USERNAME, settings.JIRA_API_TOKEN]):
-            logfire.error("Credenciales de Jira no configuradas completamente en .env")
-            raise ValueError("Credenciales de Jira no configuradas completamente. Revisa tu archivo .env.")
-        try:
-            with logfire.span("jira_client.initialization"):
-                _jira_client = Jira(
-                    url=settings.JIRA_URL,
-                    username=settings.JIRA_USERNAME,
-                    password=settings.JIRA_API_TOKEN, # 'password' se usa para el API token aquí
-                    cloud=True # Asumimos Jira Cloud, ajustar si es Server
-                )
-                # Probar la conexión (opcional pero recomendado)
-                user = _jira_client.myself()
-                logfire.info("Cliente Jira inicializado y conectado exitosamente")
-        except Exception as e:
-            logfire.error("Error al inicializar el cliente Jira: {error_message}", error_message=str(e), exc_info=True)
-            _jira_client = None # Asegurar que no se use una instancia fallida
-            raise ConnectionError(f"No se pudo conectar a Jira: {e}")
-    return _jira_client
+    # global _jira_client # Ya no es global
+    # if _jira_client is None: # Ya no es singleton
+
+    jira_url = settings.JIRA_URL
+    jira_user = username if username else settings.JIRA_USERNAME
+    jira_token = api_key if api_key else settings.JIRA_API_TOKEN
+
+    if not all([jira_url, jira_user, jira_token]):
+        logfire.error("Credenciales de Jira (URL, Username, Token) no configuradas completamente.")
+        raise ValueError("Credenciales de Jira no configuradas completamente. Revisa tu configuración.")
+    
+    try:
+        with logfire.span("jira_client.initialization", user=jira_user):
+            client = Jira(
+                url=jira_url,
+                username=jira_user,
+                password=jira_token, # 'password' se usa para el API token aquí
+                cloud=True # Asumimos Jira Cloud, ajustar si es Server
+            )
+            # Probar la conexión (opcional pero recomendado)
+            user_info = client.myself()
+            logfire.info(f"Cliente Jira inicializado y conectado exitosamente para el usuario {jira_user} (displayName: {user_info.get('displayName')})")
+            return client
+    except Exception as e:
+        logfire.error(f"Error al inicializar el cliente Jira para {jira_user}: {e}", exc_info=True)
+        # _jira_client = None # Ya no es global
+        raise ConnectionError(f"No se pudo conectar a Jira para {jira_user}: {e}")
+    # return _jira_client # Ya no es global
 
 def check_jira_connection() -> tuple[bool, str]:
     """
     Verifica la conexión con Jira intentando obtener los detalles del usuario actual.
+    Para esta verificación del sistema, se usan las credenciales globales.
     Retorna una tupla (status: bool, message: str).
     """
     try:
+        # Para el health check, usamos get_jira_client sin parámetros para que use credenciales globales.
         client = get_jira_client()
         if client:
             user = client.myself()

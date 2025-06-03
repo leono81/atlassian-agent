@@ -6,6 +6,7 @@ import re
 import functools
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta, timezone, time
+import inspect # Added import
 
 from pydantic import BaseModel, Field
 from pydantic.fields import FieldInfo 
@@ -162,15 +163,39 @@ def _clean_field_info_param(param_value: Any) -> Any:
 
 async def search_issues(
     jql_query: str = Field(..., description="La consulta JQL para buscar issues. Ejemplo: 'project = \"PROJ\" AND status = Open ORDER BY priority DESC'"),
-    max_results: int = 10
+    max_results: int = 10,
+    atlassian_username: Optional[str] = None, 
+    atlassian_api_key: Optional[str] = None
 ) -> List[JiraIssue]:
-    actual_max_results = min(max(1, max_results), 100)
-    logfire.info("Ejecutando search_issues con JQL: {jql_query}, max_results: {max_results}",
-                 jql_query=jql_query, max_results=actual_max_results)
+    # SIEMPRE intentar cargar credenciales de st.session_state primero
     try:
-        # Tracking removido para evitar dependencias circulares
+        import streamlit as st
+        current_function_name = inspect.currentframe().f_code.co_name
         
-        jira = get_jira_client()
+        # Siempre intentar usar credenciales de session_state si están disponibles
+        if hasattr(st, 'session_state') and "atlassian_username" in st.session_state and "atlassian_api_key" in st.session_state:
+            session_username = st.session_state.get("atlassian_username")
+            session_api_key = st.session_state.get("atlassian_api_key")
+            
+            if session_username and session_api_key:
+                atlassian_username = session_username
+                atlassian_api_key = session_api_key
+                logfire.debug(f"{current_function_name}: Using Atlassian credentials from st.session_state for user {atlassian_username}")
+            else:
+                logfire.warn(f"{current_function_name}: st.session_state exists but credentials are empty - username: '{session_username}', api_key: {'***' if session_api_key else 'None'}")
+        else:
+            logfire.warn(f"{current_function_name}: st.session_state or credentials not found in session_state")
+            
+    except ImportError:
+        logfire.warn(f"{current_function_name}: Streamlit not available. Cannot fetch credentials from session_state.")
+    except Exception as e:
+        logfire.error(f"{current_function_name}: Error accessing st.session_state: {e}", exc_info=True)
+
+    actual_max_results = min(max(1, max_results), 100)
+    logfire.info("Ejecutando search_issues con JQL: {jql_query}, max_results: {max_results}, user: {user}",
+                 jql_query=jql_query, max_results=actual_max_results, user=atlassian_username)
+    try:
+        jira = get_jira_client(username=atlassian_username, api_key=atlassian_api_key)
         loop = asyncio.get_running_loop()
         with logfire.span("jira.jql_search", jql=jql_query, limit=actual_max_results):
             issues_raw = await loop.run_in_executor(None, lambda: jira.jql(jql_query, limit=actual_max_results))
@@ -197,11 +222,35 @@ async def search_issues(
         return [JiraIssue(key="ERROR", summary=f"Error al buscar issues: {str(e)}")]
 
 async def get_issue_details(
-    issue_key: str = Field(..., description="La clave del issue (ej. 'PROJ-123').")
+    issue_key: str = Field(..., description="La clave del issue (ej. 'PROJ-123')."),
+    atlassian_username: Optional[str] = None, # Added
+    atlassian_api_key: Optional[str] = None  # Added
 ) -> JiraIssueDetails:
-    logfire.info("Ejecutando get_issue_details para: {issue_key}", issue_key=issue_key)
+    # Fallback logic for credentials
+    if not atlassian_username or not atlassian_api_key:
+        try:
+            import streamlit as st
+            current_function_name = inspect.currentframe().f_code.co_name
+            if "atlassian_username" in st.session_state and st.session_state.atlassian_username and \
+               "atlassian_api_key" in st.session_state and st.session_state.atlassian_api_key:
+                atlassian_username = st.session_state.atlassian_username
+                atlassian_api_key = st.session_state.atlassian_api_key
+                logfire.debug(f"{current_function_name}: Using Atlassian credentials from st.session_state for user {atlassian_username}.")
+            else:
+                logfire.warn(
+                    f"{current_function_name}: Atlassian credentials not found or incomplete in st.session_state. "
+                    f"Username present: {'atlassian_username' in st.session_state and bool(st.session_state.atlassian_username)}. "
+                    f"API key present: {'atlassian_api_key' in st.session_state and bool(st.session_state.atlassian_api_key)}."
+                )
+        except ImportError:
+            logfire.warn(f"{inspect.currentframe().f_code.co_name}: Streamlit not available. Cannot fetch credentials from session_state.")
+        except Exception as e:
+            logfire.warn(f"{inspect.currentframe().f_code.co_name}: Could not get credentials from st.session_state: {e}")
+
+    logfire.info("Ejecutando get_issue_details para: {issue_key}, user: {user}", 
+                 issue_key=issue_key, user=atlassian_username)
     try:
-        jira = get_jira_client()
+        jira = get_jira_client(username=atlassian_username, api_key=atlassian_api_key) # Modified
         loop = asyncio.get_running_loop()
         with logfire.span("jira.issue_details", issue_key=issue_key):
             issue_data = await loop.run_in_executor(None, jira.issue, issue_key)
@@ -230,11 +279,35 @@ async def get_issue_details(
 
 async def add_comment_to_jira_issue(
     issue_key: str = Field(..., description="La clave del issue al que añadir el comentario (ej. 'PROJ-123')."),
-    comment_body: str = Field(..., description="El contenido del comentario.")
+    comment_body: str = Field(..., description="El contenido del comentario."),
+    atlassian_username: Optional[str] = None, # Added
+    atlassian_api_key: Optional[str] = None  # Added
 ) -> JiraComment:
-    logfire.info("Intentando añadir comentario al issue: {issue_key}", issue_key=issue_key)
+    # Fallback logic for credentials
+    if not atlassian_username or not atlassian_api_key:
+        try:
+            import streamlit as st
+            current_function_name = inspect.currentframe().f_code.co_name
+            if "atlassian_username" in st.session_state and st.session_state.atlassian_username and \
+               "atlassian_api_key" in st.session_state and st.session_state.atlassian_api_key:
+                atlassian_username = st.session_state.atlassian_username
+                atlassian_api_key = st.session_state.atlassian_api_key
+                logfire.debug(f"{current_function_name}: Using Atlassian credentials from st.session_state for user {atlassian_username}.")
+            else:
+                logfire.warn(
+                    f"{current_function_name}: Atlassian credentials not found or incomplete in st.session_state. "
+                    f"Username present: {'atlassian_username' in st.session_state and bool(st.session_state.atlassian_username)}. "
+                    f"API key present: {'atlassian_api_key' in st.session_state and bool(st.session_state.atlassian_api_key)}."
+                )
+        except ImportError:
+            logfire.warn(f"{inspect.currentframe().f_code.co_name}: Streamlit not available. Cannot fetch credentials from session_state.")
+        except Exception as e:
+            logfire.warn(f"{inspect.currentframe().f_code.co_name}: Could not get credentials from st.session_state: {e}")
+
+    logfire.info("Intentando añadir comentario al issue: {issue_key}, user: {user}", 
+                 issue_key=issue_key, user=atlassian_username)
     try:
-        jira = get_jira_client()
+        jira = get_jira_client(username=atlassian_username, api_key=atlassian_api_key) # Modified
         loop = asyncio.get_running_loop()
         with logfire.span("jira.add_comment_to_issue", issue_key=issue_key):
             comment_data_dict = await loop.run_in_executor(None, jira.issue_add_comment, issue_key, comment_body)
@@ -302,20 +375,44 @@ async def add_worklog_to_jira_issue(
         description="Opcional. Fecha y hora de inicio del trabajo. Usa 'ahora' para el momento actual, o un formato ISO 8601 como 'AAAA-MM-DDTHH:MM:SS+ZZZZ' (ej. '2024-07-30T14:30:00+02:00'). Si se omite, se usará la hora actual."
     ),
     comment: Optional[str] = Field(default=None, description="Un comentario opcional para el worklog."),
-    confirm: bool = Field(default=False, description="Confirma si se debe proceder con el registro si la fecha fue interpretada.")
+    confirm: bool = Field(default=False, description="Confirma si se debe proceder con el registro si la fecha fue interpretada."),
+    atlassian_username: Optional[str] = None, # Added
+    atlassian_api_key: Optional[str] = None  # Added
 ) -> JiraWorklog:
-    # Limpiar parámetros que pueden llegar como FieldInfo
-    started_datetime_str = _clean_field_info_param(started_datetime_str)
-    comment = _clean_field_info_param(comment)
-    
-    # Validar que time_spent (obligatorio) no sea FieldInfo
-    if isinstance(time_spent, FieldInfo):
-         logfire.error("El parámetro obligatorio 'time_spent' fue recibido como FieldInfo. Esto no debería ocurrir.")
-         raise ValueError("Error interno: 'time_spent' no fue proporcionado correctamente.")
+    # Fallback logic for credentials
+    if not atlassian_username or not atlassian_api_key:
+        try:
+            import streamlit as st
+            current_function_name = inspect.currentframe().f_code.co_name
+            if "atlassian_username" in st.session_state and st.session_state.atlassian_username and \
+               "atlassian_api_key" in st.session_state and st.session_state.atlassian_api_key:
+                atlassian_username = st.session_state.atlassian_username
+                atlassian_api_key = st.session_state.atlassian_api_key
+                logfire.debug(f"{current_function_name}: Using Atlassian credentials from st.session_state for user {atlassian_username}.")
+            else:
+                logfire.warn(
+                    f"{current_function_name}: Atlassian credentials not found or incomplete in st.session_state. "
+                    f"Username present: {'atlassian_username' in st.session_state and bool(st.session_state.atlassian_username)}. "
+                    f"API key present: {'atlassian_api_key' in st.session_state and bool(st.session_state.atlassian_api_key)}."
+                )
+        except ImportError:
+            logfire.warn(f"{inspect.currentframe().f_code.co_name}: Streamlit not available. Cannot fetch credentials from session_state.")
+        except Exception as e:
+            logfire.warn(f"{inspect.currentframe().f_code.co_name}: Could not get credentials from st.session_state: {e}")
 
-    logfire.info("Intentando añadir worklog al issue: {issue_key} por '{ts_str}'", issue_key=issue_key, ts_str=time_spent)
+    # Limpiar parámetros que pueden llegar como FieldInfo
+    time_spent_cleaned = _clean_field_info_param(time_spent)
+    started_datetime_str_cleaned = _clean_field_info_param(started_datetime_str)
+    comment_cleaned = _clean_field_info_param(comment)
+    confirm_cleaned = _clean_field_info_param(confirm)
+
+    logfire.info(
+        "add_worklog_to_jira_issue: issue_key={key}, time_spent={ts}, started={start}, comment={cmt}, confirm={cnf}, user={user}",
+        key=issue_key, ts=time_spent_cleaned, start=started_datetime_str_cleaned, 
+        cmt=bool(comment_cleaned), cnf=confirm_cleaned, user=atlassian_username
+    )
     try:
-        jira = get_jira_client()
+        jira = get_jira_client(username=atlassian_username, api_key=atlassian_api_key) # Modified
         loop = asyncio.get_running_loop()
 
         time_spent_seconds_int = _parse_time_spent_to_seconds(time_spent)
@@ -324,17 +421,17 @@ async def add_worklog_to_jira_issue(
 
         # --- Manejo robusto de fechas ---
         # Si started_datetime_str es una fecha relativa (no ISO ni 'ahora'), usar parse_relative_date
-        if not started_datetime_str or (isinstance(started_datetime_str, str) and started_datetime_str.lower() == 'ahora'):
+        if not started_datetime_str_cleaned or (isinstance(started_datetime_str_cleaned, str) and started_datetime_str_cleaned.lower() == 'ahora'):
             _started_dt_object = datetime.now(timezone.utc).astimezone()
         else:
             try:
-                _started_dt_object = datetime.fromisoformat(started_datetime_str.replace("Z", "+00:00"))
+                _started_dt_object = datetime.fromisoformat(started_datetime_str_cleaned.replace("Z", "+00:00"))
                 if _started_dt_object.tzinfo is None:
                     _started_dt_object = _started_dt_object.replace(tzinfo=timezone.utc).astimezone()
             except ValueError:
                 # Usar fecha actual si no se puede interpretar (date_utils comentado temporalmente)
                 _started_dt_object = datetime.now(timezone.utc).astimezone()
-                logfire.warning("No se pudo interpretar la fecha '{date_str}', usando fecha actual", date_str=started_datetime_str)
+                logfire.warning("No se pudo interpretar la fecha '{date_str}', usando fecha actual", date_str=started_datetime_str_cleaned)
         # Formatear como string para Jira
         started_str = _started_dt_object.strftime("%Y-%m-%dT%H:%M:%S.000%z")
         # Llamada correcta: argumentos posicionales
@@ -401,71 +498,55 @@ async def get_user_worklog_hours_for_issue(
 
 async def get_user_hours_on_story(
     issue_key: str = Field(..., description="Clave de la historia (issue), ej: 'PROJ-123'"),
-    username_or_accountid: str = Field(..., description="Usuario (accountId, name o displayName)")
+    username_or_accountid: str = Field(..., description="Usuario (accountId, name o displayName)"),
+    atlassian_username: Optional[str] = None, # Added
+    atlassian_api_key: Optional[str] = None  # Added
 ) -> Dict[str, Any]:
-    """
-    Devuelve la cantidad total de horas que un usuario trabajó en una historia (issue).
-    Incluye validación del usuario y manejo de confirmaciones.
-    """
-    # Limpiar parámetros que pueden llegar como FieldInfo
-    issue_key = _clean_field_info_param(issue_key)
-    username_or_accountid = _clean_field_info_param(username_or_accountid)
-    
-    if not issue_key or not isinstance(issue_key, str):
-        return {
-            "hours": 0.0,
-            "requires_confirmation": False,
-            "message": "La clave del issue no puede estar vacía.",
-            "suggestions": []
-        }
-    
-    if not username_or_accountid or not isinstance(username_or_accountid, str):
-        return {
-            "hours": 0.0,
-            "requires_confirmation": False,
-            "message": "El identificador de usuario no puede estar vacío.",
-            "suggestions": []
-        }
-    
-    # Validar usuario primero
-    validation_result = await validate_jira_user(username_or_accountid)
-    
-    # Si requiere confirmación, devolver información para que el usuario confirme
-    if validation_result.requires_confirmation:
-        return {
-            "hours": 0.0,
-            "requires_confirmation": True,
-            "message": validation_result.confirmation_message,
-            "suggestions": [
-                {
-                    "display_name": user.display_name,
-                    "email": user.email_address,
-                    "account_id": user.account_id
-                }
-                for user in validation_result.suggestions
-            ]
-        }
-    
-    # Si no se encontró usuario
-    if not validation_result.exact_match:
-        return {
-            "hours": 0.0,
-            "requires_confirmation": False,
-            "message": validation_result.confirmation_message or f"Usuario '{username_or_accountid}' no encontrado.",
-            "suggestions": []
-        }
-    
-    # Si hay coincidencia exacta, proceder con la consulta
+    # Fallback logic for credentials
+    if not atlassian_username or not atlassian_api_key:
+        try:
+            import streamlit as st
+            current_function_name = inspect.currentframe().f_code.co_name
+            if "atlassian_username" in st.session_state and st.session_state.atlassian_username and \
+               "atlassian_api_key" in st.session_state and st.session_state.atlassian_api_key:
+                atlassian_username = st.session_state.atlassian_username
+                atlassian_api_key = st.session_state.atlassian_api_key
+                logfire.debug(f"{current_function_name}: Using Atlassian credentials from st.session_state for user {atlassian_username}.")
+            else:
+                logfire.warn(
+                    f"{current_function_name}: Atlassian credentials not found or incomplete in st.session_state. "
+                    f"Username present: {'atlassian_username' in st.session_state and bool(st.session_state.atlassian_username)}. "
+                    f"API key present: {'atlassian_api_key' in st.session_state and bool(st.session_state.atlassian_api_key)}."
+                )
+        except ImportError:
+            logfire.warn(f"{inspect.currentframe().f_code.co_name}: Streamlit not available. Cannot fetch credentials from session_state.")
+        except Exception as e:
+            logfire.warn(f"{inspect.currentframe().f_code.co_name}: Could not get credentials from st.session_state: {e}")
+
+    logfire.info("get_user_hours_on_story: issue_key={key}, target_user={tuser}, request_user={ruser}", 
+                 key=issue_key, tuser=username_or_accountid, ruser=atlassian_username)
     try:
-        hours = await get_user_worklog_hours_for_issue(issue_key, validation_result.exact_match.account_id)
+        jira = get_jira_client(username=atlassian_username, api_key=atlassian_api_key) # Modified
+        loop = asyncio.get_running_loop()
+        worklogs_data = await loop.run_in_executor(None, lambda: jira.issue_get_worklog(issue_key))
+        total_seconds = 0
+        for worklog in worklogs_data.get('worklogs', []):
+            author = worklog.get('author', {})
+            # Compatibilidad con Jira Cloud y Server
+            if (
+                author.get('name') == username_or_accountid or
+                author.get('accountId') == username_or_accountid or
+                author.get('displayName') == username_or_accountid
+            ):
+                total_seconds += worklog.get('timeSpentSeconds', 0)
+        total_hours = total_seconds / 3600
         return {
-            "hours": hours,
+            "hours": total_hours,
             "requires_confirmation": False,
-            "message": f"Horas trabajadas por {validation_result.exact_match.display_name} en {issue_key}: {hours}h",
+            "message": f"Horas trabajadas por {username_or_accountid} en {issue_key}: {total_hours}h",
             "user_confirmed": {
-                "display_name": validation_result.exact_match.display_name,
-                "email": validation_result.exact_match.email_address,
-                "account_id": validation_result.exact_match.account_id
+                "display_name": username_or_accountid,
+                "account_id": username_or_accountid
             }
         }
     except Exception as e:
@@ -480,36 +561,36 @@ async def get_user_hours_on_story(
 async def get_user_hours_with_confirmed_user(
     issue_key: str = Field(..., description="Clave de la historia (issue), ej: 'PROJ-123'"),
     user_account_id: str = Field(..., description="Account ID del usuario confirmado"),
-    user_display_name: str = Field(..., description="Nombre del usuario para referencia")
+    user_display_name: str = Field(..., description="Nombre del usuario para referencia"),
+    atlassian_username: Optional[str] = None, # Added
+    atlassian_api_key: Optional[str] = None  # Added
 ) -> Dict[str, Any]:
-    """
-    Consulta las horas trabajadas usando un usuario ya confirmado por su account ID.
-    Esta función se usa después de que el usuario ha confirmado cuál usuario quiere consultar.
-    """
-    # Limpiar parámetros que pueden llegar como FieldInfo
-    issue_key = _clean_field_info_param(issue_key)
-    user_account_id = _clean_field_info_param(user_account_id)
-    user_display_name = _clean_field_info_param(user_display_name)
-    
-    if not issue_key or not isinstance(issue_key, str):
-        return {
-            "hours": 0.0,
-            "message": "La clave del issue no puede estar vacía."
-        }
-    
-    if not user_account_id or not isinstance(user_account_id, str):
-        return {
-            "hours": 0.0,
-            "message": "El account ID del usuario no puede estar vacío."
-        }
-    
-    if not user_display_name or not isinstance(user_display_name, str):
-        user_display_name = "Usuario confirmado"
-    
-    logfire.info("Consultando horas para usuario confirmado: {user} en {issue}", 
-                 user=user_display_name, issue=issue_key)
-    
+    # Fallback logic for credentials
+    if not atlassian_username or not atlassian_api_key:
+        try:
+            import streamlit as st
+            current_function_name = inspect.currentframe().f_code.co_name
+            if "atlassian_username" in st.session_state and st.session_state.atlassian_username and \
+               "atlassian_api_key" in st.session_state and st.session_state.atlassian_api_key:
+                atlassian_username = st.session_state.atlassian_username
+                atlassian_api_key = st.session_state.atlassian_api_key
+                logfire.debug(f"{current_function_name}: Using Atlassian credentials from st.session_state for user {atlassian_username}.")
+            else:
+                logfire.warn(
+                    f"{current_function_name}: Atlassian credentials not found or incomplete in st.session_state. "
+                    f"Username present: {'atlassian_username' in st.session_state and bool(st.session_state.atlassian_username)}. "
+                    f"API key present: {'atlassian_api_key' in st.session_state and bool(st.session_state.atlassian_api_key)}."
+                )
+        except ImportError:
+            logfire.warn(f"{inspect.currentframe().f_code.co_name}: Streamlit not available. Cannot fetch credentials from session_state.")
+        except Exception as e:
+            logfire.warn(f"{inspect.currentframe().f_code.co_name}: Could not get credentials from st.session_state: {e}")
+
+    logfire.info("get_user_hours_with_confirmed_user: issue_key={key}, target_user_id={tid}, target_user_name={tname}, request_user={ruser}",
+                 key=issue_key, tid=user_account_id, tname=user_display_name, ruser=atlassian_username)
     try:
+        jira = get_jira_client(username=atlassian_username, api_key=atlassian_api_key) # Modified
+        loop = asyncio.get_running_loop()
         hours = await get_user_worklog_hours_for_issue(issue_key, user_account_id)
         return {
             "hours": hours,
@@ -529,72 +610,119 @@ async def get_user_hours_with_confirmed_user(
 
 async def get_child_issues_status(
     parent_issue_key: str = Field(..., description="Clave de la historia o iniciativa principal (ej: 'PROJ-123')"),
-    days_soon: int = 3
+    days_soon: int = 3,
+    atlassian_username: Optional[str] = None, # Added
+    atlassian_api_key: Optional[str] = None  # Added
 ) -> List[dict]:
-    """
-    Devuelve las subtareas/tareas hijas de una historia/iniciativa, con análisis de vencimiento y responsable.
-    """
-    # Buscar subtareas (issues cuyo parent es la historia)
-    jql_subtasks = f'parent = "{parent_issue_key}" ORDER BY priority DESC'
-    subtasks = await search_issues(jql_subtasks, max_results=50)
-    results = []
-    now = datetime.now().date()
-    soon_threshold = now + timedelta(days=days_soon)
+    # Fallback logic for credentials
+    if not atlassian_username or not atlassian_api_key:
+        try:
+            import streamlit as st
+            current_function_name = inspect.currentframe().f_code.co_name
+            if "atlassian_username" in st.session_state and st.session_state.atlassian_username and \
+               "atlassian_api_key" in st.session_state and st.session_state.atlassian_api_key:
+                atlassian_username = st.session_state.atlassian_username
+                atlassian_api_key = st.session_state.atlassian_api_key
+                logfire.debug(f"{current_function_name}: Using Atlassian credentials from st.session_state for user {atlassian_username}.")
+            else:
+                logfire.warn(
+                    f"{current_function_name}: Atlassian credentials not found or incomplete in st.session_state. "
+                    f"Username present: {'atlassian_username' in st.session_state and bool(st.session_state.atlassian_username)}. "
+                    f"API key present: {'atlassian_api_key' in st.session_state and bool(st.session_state.atlassian_api_key)}."
+                )
+        except ImportError:
+            logfire.warn(f"{inspect.currentframe().f_code.co_name}: Streamlit not available. Cannot fetch credentials from session_state.")
+        except Exception as e:
+            logfire.warn(f"{inspect.currentframe().f_code.co_name}: Could not get credentials from st.session_state: {e}")
 
-    for issue in subtasks:
-        duedate = None
-        status_due = "Sin vencimiento"
-        if issue.duedate:
-            try:
-                duedate = datetime.strptime(issue.duedate, "%Y-%m-%d").date()
-                if duedate < now:
-                    status_due = "Vencida"
-                elif duedate <= soon_threshold:
-                    status_due = "Próxima a vencer"
-                else:
-                    status_due = "En tiempo"
-            except Exception:
-                status_due = "Fecha inválida"
-        results.append({
-            "key": issue.key,
-            "summary": issue.summary,
-            "assignee": issue.assignee,
-            "status": issue.status,
-            "duedate": issue.duedate,
-            "vencimiento": status_due
-        })
-    return results
+    logfire.info("get_child_issues_status for {key}, user: {user}", key=parent_issue_key, user=atlassian_username)
+    try:
+        jira = get_jira_client(username=atlassian_username, api_key=atlassian_api_key) # Modified
+        loop = asyncio.get_running_loop()
+        # Buscar subtareas (issues cuyo parent es la historia)
+        jql_subtasks = f'parent = "{parent_issue_key}" ORDER BY priority DESC'
+        subtasks = await search_issues(jql_subtasks, max_results=50, atlassian_username=atlassian_username, atlassian_api_key=atlassian_api_key)
+        results = []
+        now = datetime.now().date()
+        soon_threshold = now + timedelta(days=days_soon)
+
+        for issue in subtasks:
+            duedate = None
+            status_due = "Sin vencimiento"
+            if issue.duedate:
+                try:
+                    duedate = datetime.strptime(issue.duedate, "%Y-%m-%d").date()
+                    if duedate < now:
+                        status_due = "Vencida"
+                    elif duedate <= soon_threshold:
+                        status_due = "Próxima a vencer"
+                    else:
+                        status_due = "En tiempo"
+                except Exception:
+                    status_due = "Fecha inválida"
+            results.append({
+                "key": issue.key,
+                "summary": issue.summary,
+                "assignee": issue.assignee,
+                "status": issue.status,
+                "duedate": issue.duedate,
+                "vencimiento": status_due
+            })
+        return results
+    except Exception as e:
+        logfire.error("Error en get_child_issues_status: {error}", error=str(e))
+        return []
 
 async def search_jira_users(
     query: str = Field(..., description="Término de búsqueda para usuarios. Puede ser nombre parcial, email o displayName"),
-    max_results: int = Field(default=10, description="Número máximo de resultados (1-50)")
+    max_results: int = Field(default=10, description="Número máximo de resultados (1-50)"),
+    atlassian_username: Optional[str] = None, # Added
+    atlassian_api_key: Optional[str] = None  # Added
 ) -> UserSearchResult:
-    """
-    Busca usuarios en Jira por nombre, email o displayName.
-    Útil cuando no recuerdas el nombre exacto del usuario.
-    """
-    # Limpiar parámetros que pueden llegar como FieldInfo
-    query = _clean_field_info_param(query)
-    max_results = _clean_field_info_param(max_results) or 10
-    
-    if not query or not isinstance(query, str):
-        return UserSearchResult(
-            users_found=[],
-            total_found=0,
-            search_query=str(query) if query else "vacío",
-            exact_match=None,
-            suggestions=[],
-            requires_confirmation=False,
-            confirmation_message="La consulta de búsqueda no puede estar vacía."
-        )
-    
-    actual_max_results = min(max(1, max_results), 50)
-    logfire.info("Ejecutando search_jira_users con query: {query}, max_results: {max_results}",
-                 query=query, max_results=actual_max_results)
-    
+    # Fallback logic for credentials
+    if not atlassian_username or not atlassian_api_key:
+        try:
+            import streamlit as st
+            current_function_name = inspect.currentframe().f_code.co_name
+            if "atlassian_username" in st.session_state and st.session_state.atlassian_username and \
+               "atlassian_api_key" in st.session_state and st.session_state.atlassian_api_key:
+                atlassian_username = st.session_state.atlassian_username
+                atlassian_api_key = st.session_state.atlassian_api_key
+                logfire.debug(f"{current_function_name}: Using Atlassian credentials from st.session_state for user {atlassian_username}.")
+            else:
+                logfire.warn(
+                    f"{current_function_name}: Atlassian credentials not found or incomplete in st.session_state. "
+                    f"Username present: {'atlassian_username' in st.session_state and bool(st.session_state.atlassian_username)}. "
+                    f"API key present: {'atlassian_api_key' in st.session_state and bool(st.session_state.atlassian_api_key)}."
+                )
+        except ImportError:
+            logfire.warn(f"{inspect.currentframe().f_code.co_name}: Streamlit not available. Cannot fetch credentials from session_state.")
+        except Exception as e:
+            logfire.warn(f"{inspect.currentframe().f_code.co_name}: Could not get credentials from st.session_state: {e}")
+
+    logfire.info("search_jira_users: query={q}, max_results={m}, request_user={ru}", 
+                 q=query, m=max_results, ru=atlassian_username)
     try:
-        jira = get_jira_client()
+        jira = get_jira_client(username=atlassian_username, api_key=atlassian_api_key) # Modified
         loop = asyncio.get_running_loop()
+        # Limpiar parámetros que pueden llegar como FieldInfo
+        query = _clean_field_info_param(query)
+        max_results = _clean_field_info_param(max_results) or 10
+        
+        if not query or not isinstance(query, str):
+            return UserSearchResult(
+                users_found=[],
+                total_found=0,
+                search_query=str(query) if query else "vacío",
+                exact_match=None,
+                suggestions=[],
+                requires_confirmation=False,
+                confirmation_message="La consulta de búsqueda no puede estar vacía."
+            )
+        
+        actual_max_results = min(max(1, max_results), 50)
+        logfire.info("Ejecutando search_jira_users con query: {query}, max_results: {max_results}",
+                     query=query, max_results=actual_max_results)
         
         # Usar la API de búsqueda de usuarios de Jira
         with logfire.span("jira.user_search", query=query, limit=actual_max_results):
@@ -664,31 +792,51 @@ async def search_jira_users(
         )
 
 async def validate_jira_user(
-    user_identifier: str = Field(..., description="Identificador del usuario: accountId, email o displayName")
+    user_identifier: str = Field(..., description="Identificador del usuario: accountId, email o displayName"),
+    atlassian_username: Optional[str] = None, # Added
+    atlassian_api_key: Optional[str] = None  # Added
 ) -> UserSearchResult:
-    """
-    Valida si un usuario existe en Jira y devuelve información para confirmación.
-    Si no hay coincidencia exacta, requiere confirmación del usuario antes de proceder.
-    """
-    # Limpiar parámetro que puede llegar como FieldInfo
-    user_identifier = _clean_field_info_param(user_identifier)
-    
-    if not user_identifier or not isinstance(user_identifier, str):
-        return UserSearchResult(
-            users_found=[],
-            total_found=0,
-            search_query=str(user_identifier) if user_identifier else "vacío",
-            exact_match=None,
-            suggestions=[],
-            requires_confirmation=False,
-            confirmation_message="El identificador de usuario no puede estar vacío."
-        )
-    
-    logfire.info("Ejecutando validate_jira_user para: {user_identifier}", user_identifier=user_identifier)
-    
+    # Fallback logic for credentials
+    if not atlassian_username or not atlassian_api_key:
+        try:
+            import streamlit as st
+            current_function_name = inspect.currentframe().f_code.co_name
+            if "atlassian_username" in st.session_state and st.session_state.atlassian_username and \
+               "atlassian_api_key" in st.session_state and st.session_state.atlassian_api_key:
+                atlassian_username = st.session_state.atlassian_username
+                atlassian_api_key = st.session_state.atlassian_api_key
+                logfire.debug(f"{current_function_name}: Using Atlassian credentials from st.session_state for user {atlassian_username}.")
+            else:
+                logfire.warn(
+                    f"{current_function_name}: Atlassian credentials not found or incomplete in st.session_state. "
+                    f"Username present: {'atlassian_username' in st.session_state and bool(st.session_state.atlassian_username)}. "
+                    f"API key present: {'atlassian_api_key' in st.session_state and bool(st.session_state.atlassian_api_key)}."
+                )
+        except ImportError:
+            logfire.warn(f"{inspect.currentframe().f_code.co_name}: Streamlit not available. Cannot fetch credentials from session_state.")
+        except Exception as e:
+            logfire.warn(f"{inspect.currentframe().f_code.co_name}: Could not get credentials from st.session_state: {e}")
+
+    logfire.info("validate_jira_user: user_identifier={uid}, request_user={ru}", 
+                 uid=user_identifier, ru=atlassian_username)
     try:
-        jira = get_jira_client()
+        jira = get_jira_client(username=atlassian_username, api_key=atlassian_api_key) # Modified
         loop = asyncio.get_running_loop()
+        # Limpiar parámetro que puede llegar como FieldInfo
+        user_identifier = _clean_field_info_param(user_identifier)
+        
+        if not user_identifier or not isinstance(user_identifier, str):
+            return UserSearchResult(
+                users_found=[],
+                total_found=0,
+                search_query=str(user_identifier) if user_identifier else "vacío",
+                exact_match=None,
+                suggestions=[],
+                requires_confirmation=False,
+                confirmation_message="El identificador de usuario no puede estar vacío."
+            )
+        
+        logfire.info("Ejecutando validate_jira_user para: {user_identifier}", user_identifier=user_identifier)
         
         # Primero intentar obtener el usuario directamente si parece ser un accountId
         if user_identifier and len(user_identifier) > 20 and ':' in user_identifier:
@@ -813,28 +961,47 @@ async def validate_jira_user(
         )
 
 async def get_issue_story_points(
-    issue_key: str = Field(..., description="Clave del issue (ej. 'PROJ-123') para obtener sus Story Points")
+    issue_key: str = Field(..., description="Clave del issue (ej. 'PROJ-123') para obtener sus Story Points"),
+    atlassian_username: Optional[str] = None, # Added
+    atlassian_api_key: Optional[str] = None  # Added
 ) -> Dict[str, Any]:
-    """
-    Obtiene los Story Points de un issue específico con información completa.
-    Incluye si los Story Points están completados (quemados) o pendientes según el estado del issue.
-    """
-    # Limpiar parámetros que pueden llegar como FieldInfo
-    issue_key = _clean_field_info_param(issue_key)
-    
-    if not issue_key or not isinstance(issue_key, str):
-        return {
-            "issue_key": str(issue_key) if issue_key else "vacío",
-            "story_points": None,
-            "found": False,
-            "message": "La clave del issue no puede estar vacía."
-        }
-    
-    logfire.info("Obteniendo Story Points para issue: {issue_key}", issue_key=issue_key)
-    
+    # Fallback logic for credentials
+    if not atlassian_username or not atlassian_api_key:
+        try:
+            import streamlit as st
+            current_function_name = inspect.currentframe().f_code.co_name
+            if "atlassian_username" in st.session_state and st.session_state.atlassian_username and \
+               "atlassian_api_key" in st.session_state and st.session_state.atlassian_api_key:
+                atlassian_username = st.session_state.atlassian_username
+                atlassian_api_key = st.session_state.atlassian_api_key
+                logfire.debug(f"{current_function_name}: Using Atlassian credentials from st.session_state for user {atlassian_username}.")
+            else:
+                logfire.warn(
+                    f"{current_function_name}: Atlassian credentials not found or incomplete in st.session_state. "
+                    f"Username present: {'atlassian_username' in st.session_state and bool(st.session_state.atlassian_username)}. "
+                    f"API key present: {'atlassian_api_key' in st.session_state and bool(st.session_state.atlassian_api_key)}."
+                )
+        except ImportError:
+            logfire.warn(f"{inspect.currentframe().f_code.co_name}: Streamlit not available. Cannot fetch credentials from session_state.")
+        except Exception as e:
+            logfire.warn(f"{inspect.currentframe().f_code.co_name}: Could not get credentials from st.session_state: {e}")
+
+    logfire.info("get_issue_story_points for {key}, user: {user}", key=issue_key, user=atlassian_username)
     try:
-        jira = get_jira_client()
+        jira = get_jira_client(username=atlassian_username, api_key=atlassian_api_key) # Modified
         loop = asyncio.get_running_loop()
+        # Limpiar parámetros que pueden llegar como FieldInfo
+        issue_key = _clean_field_info_param(issue_key)
+        
+        if not issue_key or not isinstance(issue_key, str):
+            return {
+                "issue_key": str(issue_key) if issue_key else "vacío",
+                "story_points": None,
+                "found": False,
+                "message": "La clave del issue no puede estar vacía."
+            }
+        
+        logfire.info("Obteniendo Story Points para issue: {issue_key}", issue_key=issue_key)
         
         # Obtener detalles del issue
         with logfire.span("jira.get_issue_for_story_points", issue_key=issue_key):
@@ -917,17 +1084,39 @@ async def get_issue_story_points(
         }
 
 async def get_all_worklog_hours_for_issue(
-    issue_key: str = Field(..., description="Clave del issue (historia, tarea o subtarea), ej: 'PROJ-123'")
+    issue_key: str = Field(..., description="Clave del issue (historia, tarea o subtarea), ej: 'PROJ-123'"),
+    atlassian_username: Optional[str] = None, # Added
+    atlassian_api_key: Optional[str] = None  # Added
 ) -> IssueWorklogReport:
-    """
-    Obtiene todas las horas registradas en un issue, detalladas por usuario.
-    Devuelve un reporte completo con el desglose de tiempo por cada usuario que trabajó en el issue.
-    """
-    logfire.info("Ejecutando get_all_worklog_hours_for_issue para: {issue_key}", issue_key=issue_key)
-    
+    # Fallback logic for credentials
+    if not atlassian_username or not atlassian_api_key:
+        try:
+            import streamlit as st
+            current_function_name = inspect.currentframe().f_code.co_name
+            if "atlassian_username" in st.session_state and st.session_state.atlassian_username and \
+               "atlassian_api_key" in st.session_state and st.session_state.atlassian_api_key:
+                atlassian_username = st.session_state.atlassian_username
+                atlassian_api_key = st.session_state.atlassian_api_key
+                logfire.debug(f"{current_function_name}: Using Atlassian credentials from st.session_state for user {atlassian_username}.")
+            else:
+                logfire.warn(
+                    f"{current_function_name}: Atlassian credentials not found or incomplete in st.session_state. "
+                    f"Username present: {'atlassian_username' in st.session_state and bool(st.session_state.atlassian_username)}. "
+                    f"API key present: {'atlassian_api_key' in st.session_state and bool(st.session_state.atlassian_api_key)}."
+                )
+        except ImportError:
+            logfire.warn(f"{inspect.currentframe().f_code.co_name}: Streamlit not available. Cannot fetch credentials from session_state.")
+        except Exception as e:
+            logfire.warn(f"{inspect.currentframe().f_code.co_name}: Could not get credentials from st.session_state: {e}")
+
+    logfire.info("get_all_worklog_hours_for_issue for {key}, user: {user}", key=issue_key, user=atlassian_username)
     try:
-        jira = get_jira_client()
+        jira = get_jira_client(username=atlassian_username, api_key=atlassian_api_key) # Modified
         loop = asyncio.get_running_loop()
+        # Limpiar parámetros que pueden llegar como FieldInfo
+        issue_key = _clean_field_info_param(issue_key)
+        
+        logfire.info("Ejecutando get_all_worklog_hours_for_issue para: {issue_key}", issue_key=issue_key)
         
         # Obtener detalles del issue para el resumen
         with logfire.span("jira.issue_details_for_worklog", issue_key=issue_key):
@@ -1053,27 +1242,48 @@ async def get_all_worklog_hours_for_issue(
 
 async def get_active_sprint_issues(
     project_key: Optional[str] = Field(default=None, description="Clave del proyecto para filtrar (ej: 'PSIMDESASW'). Si no se especifica, busca en todos los proyectos."),
-    max_results: int = 20
+    max_results: int = 20,
+    atlassian_username: Optional[str] = None, # Added
+    atlassian_api_key: Optional[str] = None  # Added
 ) -> SprintIssues:
-    """
-    Obtiene todos los issues del sprint activo con información completa del sprint.
-    """
-    # Limpiar parámetros que pueden llegar como FieldInfo
-    project_key = _clean_field_info_param(project_key)
-    
-    actual_max_results = min(max(1, max_results), 100)
-    
-    # Construir JQL para sprint activo
-    if project_key:
-        jql_query = f'project = "{project_key}" AND sprint in openSprints() ORDER BY priority DESC, status ASC'
-    else:
-        jql_query = 'sprint in openSprints() ORDER BY priority DESC, status ASC'
-    
-    logfire.info("Ejecutando get_active_sprint_issues con JQL: {jql_query}", jql_query=jql_query)
-    
+    # Fallback logic for credentials
+    if not atlassian_username or not atlassian_api_key:
+        try:
+            import streamlit as st
+            current_function_name = inspect.currentframe().f_code.co_name
+            if "atlassian_username" in st.session_state and st.session_state.atlassian_username and \
+               "atlassian_api_key" in st.session_state and st.session_state.atlassian_api_key:
+                atlassian_username = st.session_state.atlassian_username
+                atlassian_api_key = st.session_state.atlassian_api_key
+                logfire.debug(f"{current_function_name}: Using Atlassian credentials from st.session_state for user {atlassian_username}.")
+            else:
+                logfire.warn(
+                    f"{current_function_name}: Atlassian credentials not found or incomplete in st.session_state. "
+                    f"Username present: {'atlassian_username' in st.session_state and bool(st.session_state.atlassian_username)}. "
+                    f"API key present: {'atlassian_api_key' in st.session_state and bool(st.session_state.atlassian_api_key)}."
+                )
+        except ImportError:
+            logfire.warn(f"{inspect.currentframe().f_code.co_name}: Streamlit not available. Cannot fetch credentials from session_state.")
+        except Exception as e:
+            logfire.warn(f"{inspect.currentframe().f_code.co_name}: Could not get credentials from st.session_state: {e}")
+
+    logfire.info("get_active_sprint_issues: project_key={pk}, max_results={mr}, request_user={ru}",
+                 pk=project_key, mr=max_results, ru=atlassian_username)
     try:
-        jira = get_jira_client()
+        jira = get_jira_client(username=atlassian_username, api_key=atlassian_api_key) # Modified
         loop = asyncio.get_running_loop()
+        # Limpiar parámetros que pueden llegar como FieldInfo
+        project_key = _clean_field_info_param(project_key)
+        
+        actual_max_results = min(max(1, max_results), 100)
+        
+        # Construir JQL para sprint activo
+        if project_key:
+            jql_query = f'project = "{project_key}" AND sprint in openSprints() ORDER BY priority DESC, status ASC'
+        else:
+            jql_query = 'sprint in openSprints() ORDER BY priority DESC, status ASC'
+        
+        logfire.info("Ejecutando get_active_sprint_issues con JQL: {jql_query}", jql_query=jql_query)
         
         # Usar expand para obtener información del sprint
         with logfire.span("jira.sprint_search", jql=jql_query, limit=actual_max_results):
@@ -1159,28 +1369,51 @@ async def get_active_sprint_issues(
 
 async def get_my_current_sprint_work(
     project_key: Optional[str] = Field(default=None, description="Clave del proyecto para filtrar (ej: 'PSIMDESASW')."),
-    assignee: Optional[str] = Field(default=None, description="Usuario asignado. Si no se especifica, usa 'currentUser()'.")
+    assignee: Optional[str] = Field(default=None, description="Usuario asignado. Si no se especifica, usa 'currentUser()'."),
+    atlassian_username: Optional[str] = None, # Added
+    atlassian_api_key: Optional[str] = None  # Added
 ) -> SprintIssues:
-    """
-    Obtiene los issues del sprint activo asignados al usuario especificado o actual.
-    """
-    # Limpiar parámetros que pueden llegar como FieldInfo
-    project_key = _clean_field_info_param(project_key)
-    assignee = _clean_field_info_param(assignee)
-    
-    # Construir JQL para trabajo del usuario en sprint activo
-    assignee_clause = f'assignee = "{assignee}"' if assignee else 'assignee = currentUser()'
-    
-    if project_key:
-        jql_query = f'project = "{project_key}" AND sprint in openSprints() AND assignee = currentUser() ORDER BY status ASC, priority DESC'
-    else:
-        jql_query = f'sprint in openSprints() AND assignee = currentUser() ORDER BY status ASC, priority DESC'
-    
-    logfire.info("Ejecutando get_my_current_sprint_work con JQL: {jql_query}", jql_query=jql_query)
-    
+    # SIEMPRE intentar cargar credenciales de st.session_state primero
     try:
-        jira = get_jira_client()
+        import streamlit as st
+        current_function_name = inspect.currentframe().f_code.co_name
+        
+        # Siempre intentar usar credenciales de session_state si están disponibles
+        if hasattr(st, 'session_state') and "atlassian_username" in st.session_state and "atlassian_api_key" in st.session_state:
+            session_username = st.session_state.get("atlassian_username")
+            session_api_key = st.session_state.get("atlassian_api_key")
+            
+            if session_username and session_api_key:
+                atlassian_username = session_username
+                atlassian_api_key = session_api_key
+                logfire.info(f"{current_function_name}: Using Atlassian credentials from st.session_state for user {atlassian_username}")
+            else:
+                logfire.warn(f"{current_function_name}: st.session_state exists but credentials are empty - username: '{session_username}', api_key: {'***' if session_api_key else 'None'}")
+        else:
+            logfire.warn(f"{current_function_name}: st.session_state or credentials not found in session_state")
+            
+    except ImportError:
+        logfire.warn(f"{current_function_name}: Streamlit not available. Cannot fetch credentials from session_state.")
+    except Exception as e:
+        logfire.error(f"{current_function_name}: Error accessing st.session_state: {e}", exc_info=True)
+
+    # Limpiar parámetros
+    project_key_cleaned = _clean_field_info_param(project_key)
+
+    logfire.info("get_my_current_sprint_work: project_key={pk}, assignee={assignee_param}, request_user={ru}",
+                 pk=project_key_cleaned, assignee_param=assignee, ru=atlassian_username)
+    try:
+        jira = get_jira_client(username=atlassian_username, api_key=atlassian_api_key) # Modified
         loop = asyncio.get_running_loop()
+        # Construir JQL para trabajo del usuario en sprint activo
+        assignee_clause = f'assignee = "{assignee}"' if assignee else 'assignee = currentUser()'
+        
+        if project_key_cleaned:
+            jql_query = f'project = "{project_key_cleaned}" AND sprint in openSprints() AND assignee = currentUser() ORDER BY status ASC, priority DESC'
+        else:
+            jql_query = f'sprint in openSprints() AND assignee = currentUser() ORDER BY status ASC, priority DESC'
+        
+        logfire.info("Ejecutando get_my_current_sprint_work con JQL: {jql_query}", jql_query=jql_query)
         
         with logfire.span("jira.my_sprint_work", jql=jql_query):
             issues_raw = await loop.run_in_executor(None, lambda: jira.jql(
@@ -1266,31 +1499,52 @@ async def get_my_current_sprint_work(
 
 async def get_sprint_progress(
     project_key: Optional[str] = Field(default=None, description="Clave del proyecto para filtrar (ej: 'PSIMDESASW')."),
-    sprint_name: Optional[str] = Field(default=None, description="Nombre específico del sprint. Si no se especifica, usa el sprint activo.")
+    sprint_name: Optional[str] = Field(default=None, description="Nombre específico del sprint. Si no se especifica, usa el sprint activo."),
+    atlassian_username: Optional[str] = None, # Added
+    atlassian_api_key: Optional[str] = None  # Added
 ) -> SprintProgress:
-    """
-    Obtiene el progreso completo del sprint con métricas detalladas incluyendo story points.
-    """
-    # Limpiar parámetros que pueden llegar como FieldInfo
-    project_key = _clean_field_info_param(project_key)
-    sprint_name = _clean_field_info_param(sprint_name)
-    
-    # Construir JQL según si se especifica sprint específico o activo
-    if sprint_name:
-        base_jql = f'sprint = "{sprint_name}"'
-    else:
-        base_jql = 'sprint in openSprints()'
-    
-    if project_key:
-        jql_query = f'project = "{project_key}" AND {base_jql} ORDER BY status ASC, priority DESC'
-    else:
-        jql_query = f'{base_jql} ORDER BY status ASC, priority DESC'
-    
-    logfire.info("Ejecutando get_sprint_progress con JQL: {jql_query}", jql_query=jql_query)
-    
+    # Fallback logic for credentials
+    if not atlassian_username or not atlassian_api_key:
+        try:
+            import streamlit as st
+            current_function_name = inspect.currentframe().f_code.co_name
+            if "atlassian_username" in st.session_state and st.session_state.atlassian_username and \
+               "atlassian_api_key" in st.session_state and st.session_state.atlassian_api_key:
+                atlassian_username = st.session_state.atlassian_username
+                atlassian_api_key = st.session_state.atlassian_api_key
+                logfire.debug(f"{current_function_name}: Using Atlassian credentials from st.session_state for user {atlassian_username}.")
+            else:
+                logfire.warn(
+                    f"{current_function_name}: Atlassian credentials not found or incomplete in st.session_state. "
+                    f"Username present: {'atlassian_username' in st.session_state and bool(st.session_state.atlassian_username)}. "
+                    f"API key present: {'atlassian_api_key' in st.session_state and bool(st.session_state.atlassian_api_key)}."
+                )
+        except ImportError:
+            logfire.warn(f"{inspect.currentframe().f_code.co_name}: Streamlit not available. Cannot fetch credentials from session_state.")
+        except Exception as e:
+            logfire.warn(f"{inspect.currentframe().f_code.co_name}: Could not get credentials from st.session_state: {e}")
+
+    # Limpiar parámetros
+    project_key_cleaned = _clean_field_info_param(project_key)
+    sprint_name_cleaned = _clean_field_info_param(sprint_name)
+
+    logfire.info("get_sprint_progress: project_key={pk}, sprint_name={sname}, request_user={ru}",
+                 pk=project_key_cleaned, sname=sprint_name_cleaned, ru=atlassian_username)
     try:
-        jira = get_jira_client()
+        jira = get_jira_client(username=atlassian_username, api_key=atlassian_api_key) # Modified
         loop = asyncio.get_running_loop()
+        # Construir JQL según si se especifica sprint específico o activo
+        if sprint_name_cleaned:
+            base_jql = f'sprint = "{sprint_name_cleaned}"'
+        else:
+            base_jql = 'sprint in openSprints()'
+        
+        if project_key_cleaned:
+            jql_query = f'project = "{project_key_cleaned}" AND {base_jql} ORDER BY status ASC, priority DESC'
+        else:
+            jql_query = f'{base_jql} ORDER BY status ASC, priority DESC'
+        
+        logfire.info("Ejecutando get_sprint_progress con JQL: {jql_query}", jql_query=jql_query)
         
         with logfire.span("jira.sprint_progress", jql=jql_query):
             issues_raw = await loop.run_in_executor(None, lambda: jira.jql(
@@ -1303,7 +1557,7 @@ async def get_sprint_progress(
             # Sprint sin issues
             default_sprint = JiraSprint(
                 id="none", 
-                name=sprint_name or "Sprint no encontrado", 
+                name=sprint_name_cleaned or "Sprint no encontrado", 
                 state="none"
             )
             return SprintProgress(
@@ -1342,8 +1596,8 @@ async def get_sprint_progress(
         if not sprint_info:
             sprint_info = JiraSprint(
                 id="unknown", 
-                name=sprint_name or "Sprint Analizado", 
-                state="active" if not sprint_name else "unknown"
+                name=sprint_name_cleaned or "Sprint Analizado", 
+                state="active" if not sprint_name_cleaned else "unknown"
             )
         
         # Calcular métricas completas con story points
@@ -1487,20 +1741,39 @@ def _calculate_sprint_progress(issues: List[JiraIssue], issues_raw_data: List[di
 # === NUEVAS FUNCIONES PARA TRANSICIONES Y ESTADOS ===
 
 async def get_issue_transitions(
-    issue_key: str = Field(..., description="Clave del issue (ej. 'PROJ-123') para obtener transiciones disponibles")
+    issue_key: str = Field(..., description="Clave del issue (ej. 'PROJ-123') para obtener transiciones disponibles"),
+    atlassian_username: Optional[str] = None, # Added
+    atlassian_api_key: Optional[str] = None  # Added
 ) -> IssueTransitionsResult:
-    """
-    Obtiene todas las transiciones disponibles para un issue específico.
-    Muestra los estados a los que se puede mover el issue desde su estado actual.
-    """
-    # Limpiar parámetros que pueden llegar como FieldInfo
-    issue_key = _clean_field_info_param(issue_key)
-    
-    logfire.info("Obteniendo transiciones para issue: {issue_key}", issue_key=issue_key)
-    
+    # Fallback logic for credentials
+    if not atlassian_username or not atlassian_api_key:
+        try:
+            import streamlit as st
+            current_function_name = inspect.currentframe().f_code.co_name
+            if "atlassian_username" in st.session_state and st.session_state.atlassian_username and \
+               "atlassian_api_key" in st.session_state and st.session_state.atlassian_api_key:
+                atlassian_username = st.session_state.atlassian_username
+                atlassian_api_key = st.session_state.atlassian_api_key
+                logfire.debug(f"{current_function_name}: Using Atlassian credentials from st.session_state for user {atlassian_username}.")
+            else:
+                logfire.warn(
+                    f"{current_function_name}: Atlassian credentials not found or incomplete in st.session_state. "
+                    f"Username present: {'atlassian_username' in st.session_state and bool(st.session_state.atlassian_username)}. "
+                    f"API key present: {'atlassian_api_key' in st.session_state and bool(st.session_state.atlassian_api_key)}."
+                )
+        except ImportError:
+            logfire.warn(f"{inspect.currentframe().f_code.co_name}: Streamlit not available. Cannot fetch credentials from session_state.")
+        except Exception as e:
+            logfire.warn(f"{inspect.currentframe().f_code.co_name}: Could not get credentials from st.session_state: {e}")
+
+    logfire.info("get_issue_transitions for {key}, user: {user}", key=issue_key, user=atlassian_username)
     try:
-        jira = get_jira_client()
+        jira = get_jira_client(username=atlassian_username, api_key=atlassian_api_key) # Modified
         loop = asyncio.get_running_loop()
+        # Limpiar parámetros que pueden llegar como FieldInfo
+        issue_key = _clean_field_info_param(issue_key)
+        
+        logfire.info("Obteniendo transiciones para issue: {issue_key}", issue_key=issue_key)
         
         # Obtener detalles del issue para el estado actual
         with logfire.span("jira.get_issue_details", issue_key=issue_key):
@@ -1645,20 +1918,39 @@ async def get_issue_transitions(
         )
 
 async def get_project_workflow_statuses(
-    project_key: str = Field(..., description="Clave del proyecto (ej. 'PROJ') para obtener todos los estados del workflow")
+    project_key: str = Field(..., description="Clave del proyecto (ej. 'PROJ') para obtener todos los estados del workflow"),
+    atlassian_username: Optional[str] = None, # Added
+    atlassian_api_key: Optional[str] = None  # Added
 ) -> ProjectWorkflowInfo:
-    """
-    Obtiene todos los estados disponibles en el workflow de un proyecto específico.
-    Útil para conocer todos los estados posibles, no solo las transiciones desde el estado actual.
-    """
-    # Limpiar parámetros que pueden llegar como FieldInfo
-    project_key = _clean_field_info_param(project_key)
-    
-    logfire.info("Obteniendo estados del workflow para proyecto: {project_key}", project_key=project_key)
-    
+    # Fallback logic for credentials
+    if not atlassian_username or not atlassian_api_key:
+        try:
+            import streamlit as st
+            current_function_name = inspect.currentframe().f_code.co_name
+            if "atlassian_username" in st.session_state and st.session_state.atlassian_username and \
+               "atlassian_api_key" in st.session_state and st.session_state.atlassian_api_key:
+                atlassian_username = st.session_state.atlassian_username
+                atlassian_api_key = st.session_state.atlassian_api_key
+                logfire.debug(f"{current_function_name}: Using Atlassian credentials from st.session_state for user {atlassian_username}.")
+            else:
+                logfire.warn(
+                    f"{current_function_name}: Atlassian credentials not found or incomplete in st.session_state. "
+                    f"Username present: {'atlassian_username' in st.session_state and bool(st.session_state.atlassian_username)}. "
+                    f"API key present: {'atlassian_api_key' in st.session_state and bool(st.session_state.atlassian_api_key)}."
+                )
+        except ImportError:
+            logfire.warn(f"{inspect.currentframe().f_code.co_name}: Streamlit not available. Cannot fetch credentials from session_state.")
+        except Exception as e:
+            logfire.warn(f"{inspect.currentframe().f_code.co_name}: Could not get credentials from st.session_state: {e}")
+
+    logfire.info("get_project_workflow_statuses for {key}, user: {user}", key=project_key, user=atlassian_username)
     try:
-        jira = get_jira_client()
+        jira = get_jira_client(username=atlassian_username, api_key=atlassian_api_key) # Modified
         loop = asyncio.get_running_loop()
+        # Limpiar parámetros que pueden llegar como FieldInfo
+        project_key = _clean_field_info_param(project_key)
+        
+        logfire.info("Obteniendo estados del workflow para proyecto: {project_key}", project_key=project_key)
         
         # Obtener información del proyecto
         with logfire.span("jira.get_project", project_key=project_key):
@@ -1732,24 +2024,23 @@ async def transition_issue(
     issue_key: str = Field(..., description="Clave del issue (ej. 'PROJ-123') a transicionar"),
     transition_id: str = Field(..., description="ID de la transición a ejecutar (obtenido de get_issue_transitions)"),
     comment: Optional[str] = Field(default=None, description="Comentario opcional para la transición"),
-    additional_fields: Optional[Dict[str, Any]] = Field(default=None, description="Campos adicionales requeridos para la transición")
+    additional_fields: Optional[Dict[str, Any]] = Field(default=None, description="Campos adicionales requeridos para la transición"),
+    atlassian_username: Optional[str] = None, # Added
+    atlassian_api_key: Optional[str] = None  # Added
 ) -> Dict[str, Any]:
-    """
-    Ejecuta una transición específica en un issue.
-    IMPORTANTE: Primero usa get_issue_transitions para ver las transiciones disponibles y sus IDs.
-    """
-    # Limpiar parámetros que pueden llegar como FieldInfo
-    issue_key = _clean_field_info_param(issue_key)
-    transition_id = _clean_field_info_param(transition_id)
-    comment = _clean_field_info_param(comment)
-    additional_fields = _clean_field_info_param(additional_fields) or {}
-    
-    logfire.info("Ejecutando transición {transition_id} en issue {issue_key}", 
-                 transition_id=transition_id, issue_key=issue_key)
-    
+    # Limpiar parámetros
+    comment_cleaned = _clean_field_info_param(comment)
+    additional_fields_cleaned = _clean_field_info_param(additional_fields)
+
+    logfire.info("transition_issue: issue_key={key}, transition_id={tid}, comment={cmt}, fields={flds}, user={user}",
+                 key=issue_key, tid=transition_id, cmt=bool(comment_cleaned), 
+                 flds=bool(additional_fields_cleaned), user=atlassian_username)
     try:
-        jira = get_jira_client()
+        jira = get_jira_client(username=atlassian_username, api_key=atlassian_api_key) # Modified
         loop = asyncio.get_running_loop()
+        # Limpiar parámetros que pueden llegar como FieldInfo
+        issue_key = _clean_field_info_param(issue_key)
+        transition_id = _clean_field_info_param(transition_id)
         
         # Ejecutar la transición usando set_issue_status_by_transition_id (método correcto para la librería)
         try:
@@ -1767,14 +2058,14 @@ async def transition_issue(
             await loop.run_in_executor(None, jira.set_issue_status_by_transition_id, issue_key, transition_id_int)
         
         # Si hay comentario, agregarlo por separado después de la transición
-        if comment:
+        if comment_cleaned:
             with logfire.span("jira.add_comment", issue_key=issue_key):
-                await loop.run_in_executor(None, jira.issue_add_comment, issue_key, comment)
+                await loop.run_in_executor(None, jira.issue_add_comment, issue_key, comment_cleaned)
         
         # Si hay campos adicionales, actualizarlos por separado después de la transición
-        if additional_fields:
+        if additional_fields_cleaned:
             with logfire.span("jira.update_fields", issue_key=issue_key):
-                await loop.run_in_executor(None, jira.update_issue_field, issue_key, additional_fields)
+                await loop.run_in_executor(None, jira.update_issue_field, issue_key, additional_fields_cleaned)
         
         # Obtener el estado actualizado del issue
         with logfire.span("jira.get_updated_issue", issue_key=issue_key):
@@ -1790,7 +2081,7 @@ async def transition_issue(
             "transition_id": transition_id_int,
             "new_status": new_status,
             "message": f"Transición ejecutada exitosamente. Issue {issue_key} ahora está en estado: {new_status}",
-            "comment_added": bool(comment)
+            "comment_added": bool(comment_cleaned)
         }
         
         logfire.info("transition_issue exitosa: {issue_key} -> {new_status}", 

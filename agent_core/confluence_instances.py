@@ -3,6 +3,7 @@
 from atlassian import Confluence
 from config import settings
 import logfire
+from typing import Optional
 
 # Configuración de Logfire (similar a jira_instances.py)
 logfire.configure(
@@ -14,40 +15,48 @@ logfire.configure(
 # logfire.instrument_httpx() # Descomentar si es necesario
 
 # --- Confluence Client Instance ---
-_confluence_client = None
+# _confluence_client = None # Eliminamos el singleton global para permitir instancias por usuario
 
-def get_confluence_client() -> Confluence:
+def get_confluence_client(username: Optional[str] = None, api_key: Optional[str] = None) -> Confluence:
     """
     Retorna una instancia inicializada y autenticada del cliente Confluence.
-    Utiliza un patrón singleton simple para evitar reinicializaciones.
+    Si se proveen username y api_key, se usan esas credenciales.
+    De lo contrario, recurre a las configuraciones globales en settings.
     """
-    global _confluence_client
-    if _confluence_client is None:
-        if not all([settings.CONFLUENCE_URL, settings.CONFLUENCE_USERNAME, settings.CONFLUENCE_API_TOKEN]):
-            logfire.error("Credenciales de Confluence no configuradas completamente en .env")
-            raise ValueError("Credenciales de Confluence no configuradas completamente. Revisa tu archivo .env.")
-        try:
-            with logfire.span("confluence_client.initialization"):
-                _confluence_client = Confluence(
-                    url=settings.CONFLUENCE_URL,
-                    username=settings.CONFLUENCE_USERNAME,
-                    password=settings.CONFLUENCE_API_TOKEN, # API Token
-                    cloud=True # Assuming Confluence Cloud. Adjust if using Server.
-                )
-                # Probar la conexión intentando obtener al menos un espacio
-                spaces_data = _confluence_client.get_all_spaces(limit=1)
-                if spaces_data and spaces_data.get('results'):
-                    logfire.info("Cliente Confluence inicializado y conectado exitosamente. Acceso a espacios confirmado.")
-                elif spaces_data: # La llamada fue exitosa pero no devolvió 'results' o estaba vacío
-                    logfire.info("Cliente Confluence inicializado. Conexión establecida, pero no se encontraron espacios accesibles o la respuesta de espacios está vacía.")
-                else: # spaces_data es None o False, lo que indicaría un problema más serio
-                    logfire.warn("Cliente Confluence inicializado, pero la llamada a get_all_spaces no devolvió datos. Verificar permisos o configuración.")
+    # global _confluence_client # Ya no es global
+    # if _confluence_client is None: # Ya no es singleton
+    
+    confluence_url = settings.CONFLUENCE_URL
+    confluence_user = username if username else settings.CONFLUENCE_USERNAME
+    confluence_token = api_key if api_key else settings.CONFLUENCE_API_TOKEN
 
-        except Exception as e:
-            logfire.error(f"Error al inicializar el cliente Confluence: {e}", exc_info=True)
-            _confluence_client = None
-            raise ConnectionError(f"No se pudo conectar a Confluence: {e}")
-    return _confluence_client
+    if not all([confluence_url, confluence_user, confluence_token]):
+        logfire.error("Credenciales de Confluence (URL, Username, Token) no configuradas completamente.")
+        raise ValueError("Credenciales de Confluence no configuradas completamente. Revisa tu configuración.")
+    
+    try:
+        with logfire.span("confluence_client.initialization", user=confluence_user):
+            client = Confluence(
+                url=confluence_url,
+                username=confluence_user,
+                password=confluence_token, # API Token
+                cloud=True # Assuming Confluence Cloud. Adjust if using Server.
+            )
+            # Probar la conexión intentando obtener al menos un espacio
+            # Esta prueba es importante para asegurar que las credenciales (de usuario o globales) son válidas
+            spaces_data = client.get_all_spaces(limit=1)
+            if spaces_data and spaces_data.get('results'):
+                logfire.info(f"Cliente Confluence inicializado y conectado exitosamente para el usuario {confluence_user}. Acceso a espacios confirmado.")
+            elif spaces_data:
+                logfire.info(f"Cliente Confluence inicializado para {confluence_user}. Conexión establecida, pero no se encontraron espacios accesibles o la respuesta está vacía.")
+            else:
+                logfire.warn(f"Cliente Confluence inicializado para {confluence_user}, pero get_all_spaces no devolvió datos. Verificar permisos.")
+            return client
+    except Exception as e:
+        logfire.error(f"Error al inicializar el cliente Confluence para {confluence_user}: {e}", exc_info=True)
+        # _confluence_client = None # Ya no es global
+        raise ConnectionError(f"No se pudo conectar a Confluence para {confluence_user}: {e}")
+    # return _confluence_client # Ya no es global
 
 def check_confluence_connection() -> tuple[bool, str]:
     """
@@ -57,6 +66,8 @@ def check_confluence_connection() -> tuple[bool, str]:
     try:
         # Attempt to get a new client instance for a fresh check
         # This avoids relying on a potentially stale global _confluence_client state for the check itself
+        # Para el health check, seguimos usando las globales por ahora, ya que es una verificación del sistema.
+        # Si se quisiera un health check por usuario, esta función debería aceptar credenciales también.
         if not all([settings.CONFLUENCE_URL, settings.CONFLUENCE_USERNAME, settings.CONFLUENCE_API_TOKEN]):
              message = "Credenciales de Confluence no configuradas para el health check."
              logfire.warn(message)
