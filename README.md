@@ -1,26 +1,72 @@
 # 🤖 Agente Conversacional Jira/Confluence
 
-Este proyecto implementa un agente conversacional construido con PydanticAI para interactuar con Jira y Confluence utilizando lenguaje natural. La interfaz de usuario se desarrolla con Streamlit y la observabilidad se gestiona con Logfire.
+Este proyecto implementa un agente conversacional avanzado construido con **PydanticAI** para interactuar con Jira y Confluence utilizando lenguaje natural. La interfaz de usuario se desarrolla con **Streamlit** y incluye autenticación multi-usuario, memoria personalizada y observabilidad completa.
 
-**🆕 NUEVO: Ahora con autenticación multi-usuario y memoria personalizada por usuario.**
+**🆕 NUEVO: Ahora con autenticación multi-usuario, memoria personalizada por usuario y capacidades avanzadas de gestión de sprints y workflows.**
 
-## ✨ Características
-- 🔍 **Consultar issues de Jira** (búsqueda, detalles)
-- ✏️ **Crear y modificar issues en Jira** (crear, comentar)
-- 📖 **Buscar y leer páginas de Confluence**
-- 📝 **Crear y modificar páginas en Confluence**
-- 💬 **Interfaz de chat amigable**
-- 🔐 **Autenticación multi-usuario con Google OAuth2**
-- 🧠 **Memoria personalizada por usuario con Mem0**
-- 🔄 **Preparado para comunicación A2A**
+## ✨ Características Principales
 
-## Stack Tecnológico
-- Python 3.10+
-- PydanticAI
-- Streamlit
-- atlassian-python-api
-- Logfire
-- uv (para gestión de dependencias y entorno)
+### 🔍 **Jira - Gestión de Issues**
+- **Búsqueda avanzada**: Consultas JQL personalizadas y búsqueda por texto
+- **Detalles completos**: Información detallada de issues incluyendo story points
+- **Gestión de comentarios**: Agregar comentarios con formato rico
+- **Registro de tiempo**: Worklog con soporte para formatos flexibles (horas, minutos, segundos)
+- **Análisis de tiempo**: Reportes detallados de horas trabajadas por usuario y issue
+- **Gestión de usuarios**: Búsqueda, validación y gestión de asignaciones
+
+### 🏃‍♂️ **Jira - Gestión de Sprints**
+- **Sprint activo**: Consultar issues del sprint en curso
+- **Progreso de sprint**: Análisis de avance con story points y porcentajes
+- **Mi trabajo actual**: Vista personalizada del trabajo asignado en el sprint
+- **Issues hijo**: Análisis de dependencias y subtareas
+
+### 🔄 **Jira - Workflows y Transiciones**
+- **Estados disponibles**: Consultar todos los estados del proyecto
+- **Transiciones permitidas**: Ver qué transiciones están disponibles para cada issue
+- **Cambio de estado**: Ejecutar transiciones con comentarios y campos adicionales
+- **Gestión de workflows**: Información completa del flujo de trabajo del proyecto
+
+### 📖 **Confluence - Gestión de Contenido**
+- **Búsqueda inteligente**: Búsqueda por texto libre o consultas CQL avanzadas
+- **Lectura de páginas**: Contenido completo con metadatos y enlaces
+- **Creación de páginas**: Crear nuevas páginas con contenido en formato XHTML
+- **Actualización de contenido**: Modificar páginas existentes con versionado
+- **Gestión de espacios**: Trabajo con múltiples espacios de Confluence
+
+### 🧠 **Memoria Personalizada (Mem0)**
+- **Aliases inteligentes**: Guardar atajos personalizados para issues, proyectos, usuarios
+- **Búsqueda semántica**: Encontrar información guardada usando lenguaje natural
+- **Contexto por usuario**: Memoria completamente aislada por usuario autenticado
+- **Tipos de memoria**: Categorización flexible (jira_alias, soporte, cliente, etc.)
+- **Precargar contexto**: Memoria completa disponible para el agente
+
+### 🔐 **Autenticación y Seguridad**
+- **Google OAuth2**: Autenticación segura multi-usuario
+- **Credenciales cifradas**: API keys de Atlassian cifradas por usuario
+- **Base de datos segura**: Almacenamiento persistente de credenciales
+- **Modo demo**: Funcionalidad completa sin autenticación para desarrollo
+
+### 📊 **Observabilidad y Logging**
+- **Logfire integrado**: Observabilidad completa con trazas distribuidas
+- **Logging contextual**: Información detallada por usuario y operación
+- **Instrumentación automática**: Monitoreo de PydanticAI y HTTP
+- **Status tracker**: Seguimiento en tiempo real del estado del agente
+
+### ⏰ **Utilidades de Tiempo**
+- **Zona horaria configurable**: Soporte para diferentes zonas horarias
+- **Fecha/hora actual**: Contexto temporal para todas las operaciones
+- **Parsing inteligente**: Interpretación flexible de formatos de tiempo
+
+## 🛠️ Stack Tecnológico
+
+- **Python 3.10+** - Lenguaje base
+- **PydanticAI** - Framework de agentes conversacionales
+- **Streamlit** - Interfaz de usuario web
+- **atlassian-python-api** - Integración con Jira/Confluence
+- **Logfire** - Observabilidad y monitoreo
+- **Mem0** - Sistema de memoria personalizada
+- **Google OAuth2** - Autenticación segura
+- **uv** - Gestión de dependencias y entorno
 
 ## 🚀 Configuración
 
@@ -40,7 +86,7 @@ uv pip install -e .[dev]
 ### 2. Configuración de autenticación (NUEVO)
 ```bash
 # Genera un cookie secret seguro
-python generate_cookie_secret.py
+python config/generate_cookie_secret.py
 
 # Copia el template de configuración
 cp .streamlit/secrets.toml.template .streamlit/secrets.toml
@@ -49,20 +95,26 @@ cp .streamlit/secrets.toml.template .streamlit/secrets.toml
 nano .streamlit/secrets.toml
 ```
 
-📖 **Para configurar Google OAuth2:** Lee `SETUP_OAUTH.md`
+📖 **Para configurar Google OAuth2:** Lee `Guides and Implementation/SETUP_OAUTH.md`
 
 ### 3. Variables de entorno
 Crea un archivo `.env` en la raíz del proyecto, basándote en `.env.example`, y completa tus credenciales:
 ```bash
-# APIs
+# APIs de IA y Memoria
 MEM0_API_KEY=tu_mem0_api_key
 OPENAI_API_KEY=tu_openai_api_key
 
-# Atlassian
+# Atlassian (configuración base)
 JIRA_URL=https://tu-empresa.atlassian.net
 CONFLUENCE_URL=https://tu-empresa.atlassian.net/wiki
 ATLASSIAN_EMAIL=tu-email@empresa.com
 ATLASSIAN_API_TOKEN=tu_api_token
+
+# Observabilidad (opcional)
+LOGFIRE_TOKEN=tu_logfire_token
+
+# Zona horaria (opcional)
+TIMEZONE=America/Buenos_Aires
 ```
 
 ### 4. Verificar configuración
@@ -70,20 +122,158 @@ ATLASSIAN_API_TOKEN=tu_api_token
 python verify_auth_setup.py
 ```
 
-## Configuración de Zona Horaria
+## ⚡ Funcionalidades Detalladas
 
-El agente utiliza la variable de entorno `TIMEZONE` para determinar la zona horaria local al devolver la fecha y hora actual.
+### 🎯 **Comandos de Jira**
 
-- **Formato:** Debe ser una zona horaria IANA válida, por ejemplo: `America/Buenos_Aires`, `Europe/Madrid`, `UTC`.
+**Búsqueda y Consultas:**
+- `"Busca issues del proyecto PROJ con estado abierto"`
+- `"Muéstrame los issues asignados a Juan"`
+- `"¿Cuáles son los bugs críticos pendientes?"`
+
+**Gestión de Tiempo:**
+- `"Registra 2 horas de trabajo en PROJ-123"`
+- `"¿Cuántas horas trabajó María en la historia PROJ-456?"`
+- `"Muestra el reporte de horas del issue PROJ-789"`
+
+**Sprints y Planificación:**
+- `"¿Cómo va el progreso del sprint actual?"`
+- `"Muestra mi trabajo pendiente en el sprint"`
+- `"¿Cuántos story points quedan por completar?"`
+
+**Workflows y Estados:**
+- `"¿A qué estados puedo mover el issue PROJ-123?"`
+- `"Cambia PROJ-456 a 'En Progreso' con comentario"`
+- `"Muestra todos los estados disponibles del proyecto"`
+
+### 📝 **Comandos de Confluence**
+
+**Búsqueda de Contenido:**
+- `"Busca páginas sobre 'API documentation' en el espacio DOCS"`
+- `"Encuentra la página de configuración del servidor"`
+- `"¿Qué documentos hay sobre el proceso de deployment?"`
+
+**Gestión de Páginas:**
+- `"Crea una página llamada 'Guía de Usuario' en el espacio DOCS"`
+- `"Actualiza la página ID 123456 con nuevo contenido"`
+- `"Lee el contenido completo de la página de arquitectura"`
+
+### 🧠 **Comandos de Memoria**
+
+**Guardar Información:**
+- `"Recuerda que 'mi proyecto' es PROJ"`
+- `"Guarda que Juan Pérez es 'juan.perez@empresa.com'"`
+- `"Alias 'servidor prod' para SRV-001"`
+
+**Recuperar Información:**
+- `"¿Cuál es mi proyecto?"`
+- `"Busca información sobre configuración de servidor"`
+- `"¿Qué aliases tengo guardados para usuarios?"`
+
+## 🏗️ Arquitectura del Sistema
+
+```
+📁 Proyecto/
+├── 🤖 agent_core/          # Core del agente PydanticAI
+│   ├── main_agent.py       # Agente principal
+│   ├── jira_instances.py   # Clientes Jira
+│   ├── confluence_instances.py # Clientes Confluence
+│   └── output_models.py    # Modelos de respuesta
+├── 🛠️ tools/              # Herramientas del agente
+│   ├── jira_tools.py       # 20+ funciones de Jira
+│   ├── confluence_tools.py # Funciones de Confluence
+│   ├── mem0_tools.py       # Sistema de memoria
+│   ├── time_tools.py       # Utilidades de tiempo
+│   └── formatting_tools.py # Formateo de respuestas
+├── 🖥️ ui/                 # Interfaz Streamlit
+│   ├── app.py              # Aplicación principal
+│   ├── agent_wrapper.py    # Wrapper del agente
+│   ├── agent_status_tracker.py # Tracking de estado
+│   └── custom_styles.py    # Estilos personalizados
+├── ⚙️ config/             # Configuración del sistema
+│   ├── settings.py         # Configuración general
+│   ├── encryption.py       # Cifrado de credenciales
+│   ├── user_credentials_db.py # BD de usuarios
+│   └── logging_context.py  # Sistema de logging
+└── 📚 tests/              # Tests automatizados
+```
+
+## 🔧 Configuración de Zona Horaria
+
+El agente utiliza la variable de entorno `TIMEZONE` para determinar la zona horaria local:
+
+- **Formato:** Zona horaria IANA válida (ej: `America/Buenos_Aires`, `Europe/Madrid`, `UTC`)
 - **Ejemplo en `.env`:**
   ```
   TIMEZONE=America/Buenos_Aires
   ```
-- **Fallback:** Si la variable no está definida o es inválida, el agente usará UTC por defecto.
+- **Fallback:** Si no está definida o es inválida, usa UTC por defecto
 
-Esto permite que todas las herramientas que dependan de la hora local sean consistentes y fácilmente configurables.
+## 🚀 Ejecución
 
-## Ejecución
-Para iniciar la aplicación Streamlit:
+### Desarrollo Local
 ```bash
 streamlit run ui/app.py
+```
+
+### Producción
+```bash
+# Con variables de entorno
+STREAMLIT_SERVER_PORT=8501 streamlit run ui/app.py
+
+# O usando el archivo principal
+python streamlit_app.py
+```
+
+## 🧪 Testing
+
+```bash
+# Ejecutar todos los tests
+pytest
+
+# Tests específicos
+pytest tests/test_jira_tools.py
+pytest tests/test_confluence_tools.py
+
+# Tests con logging detallado
+pytest -v -s
+```
+
+## 📈 Observabilidad
+
+### Logfire (Recomendado)
+1. Obtén tu token en [logfire.pydantic.dev](https://logfire.pydantic.dev)
+2. Configura `LOGFIRE_TOKEN` en tu `.env`
+3. Visualiza trazas en tiempo real en el dashboard
+
+### Logs Locales
+Los logs se almacenan automáticamente con contexto de usuario y operación.
+
+## 🔒 Seguridad
+
+- **Cifrado**: Todas las API keys se cifran antes del almacenamiento
+- **Aislamiento**: Cada usuario tiene credenciales y memoria separadas
+- **Autenticación**: OAuth2 con Google para acceso seguro
+- **No logging**: Las credenciales nunca se registran en logs
+
+## 🤝 Contribuir
+
+1. Fork el proyecto
+2. Crea una rama feature (`git checkout -b feature/nueva-funcionalidad`)
+3. Commit tus cambios (`git commit -am 'Agrega nueva funcionalidad'`)
+4. Push a la rama (`git push origin feature/nueva-funcionalidad`)
+5. Abre un Pull Request
+
+## 📄 Licencia
+
+Este proyecto está bajo la Licencia MIT. Ver el archivo `LICENSE` para más detalles.
+
+## 🆘 Soporte
+
+- 📖 **Documentación**: Revisa los archivos en `Guides and Implementation/`
+- 🐛 **Issues**: Reporta problemas en GitHub Issues
+- 💬 **Discusiones**: Únete a las GitHub Discussions
+
+---
+
+**Desarrollado con ❤️ usando PydanticAI, Streamlit y las mejores prácticas de desarrollo de agentes conversacionales.**
