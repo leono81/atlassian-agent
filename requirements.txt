@@ -18,7 +18,6 @@ charset-normalizer==3.4.2
 click==8.2.1
 cohere==5.15.0
 colorama==0.4.6
--e git+ssh://git@github.com/leono81/atlassian-agent.git@18300d6e7d5f2e83b87c215bc2939d41bd7d99af#egg=conversational_jira_confluence_agent
 cryptography==45.0.3
 dateparser==1.2.1
 Deprecated==1.2.18
