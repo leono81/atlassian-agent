@@ -300,20 +300,35 @@ def _clear_local_user_session():
         from config.user_credentials_db import user_credentials_db
         user_credentials_db.invalidate_user_session(st.session_state.local_user_session_id)
     
-    # Limpiar session state
-    keys_to_remove = [
+    # Limpiar TODO el session_state relacionado con el usuario para evitar fugas de datos entre sesiones.
+    # Esto es CRÍTICO para la seguridad.
+    keys_to_clear = [
+        # Autenticación y sesión
+        'auth_method',
         'local_user_authenticated',
-        'local_user_email', 
+        'local_user_email',
         'local_user_display_name',
         'local_user_is_admin',
-        'local_user_session_id'
+        'local_user_session_id',
+        'user_authenticated', 
+        'user_email', 
+        'display_name',
+        
+        # Datos de la aplicación
+        'chat_history',
+        'pydantic_ai_messages',
+        'streamlit_display_messages',
+        'memoria_usuario',
+        
+        # Credenciales sensibles
+        'atlassian_api_key',
+        'atlassian_username'
     ]
-    
-    for key in keys_to_remove:
+    for key in keys_to_clear:
         if key in st.session_state:
             del st.session_state[key]
     
-    logger.info("local_user_session_cleared")
+    logger.info("local_user_session_cleared_completely")
 
 def _validate_local_user_session() -> bool:
     """Valida la sesión local del usuario."""
@@ -334,7 +349,7 @@ def _validate_local_user_session() -> bool:
         st.session_state.local_user_is_admin = session_info['is_admin']
         return True
     else:
-        # Sesión inválida - limpiar
+        # Sesión inválida - limpiarla
         _clear_local_user_session()
         return False
 
@@ -507,13 +522,15 @@ def _create_user_tab():
             new_display_name = st.text_input("👤 Nombre completo", placeholder="Juan Pérez")
             is_admin = st.checkbox("⚙️ Permisos de administrador", value=False)
         
-        col_cancel, col_create = st.columns([1, 2])
+        # Columnas para alinear botones: Espaciador, Cancelar, Crear
+        st.markdown("---") # Separador visual
+        col_spacer, col_cancel, col_create = st.columns([3, 1, 1])
         
         with col_cancel:
-            cancel_clicked = st.form_submit_button("❌ Cancelar")
+            cancel_clicked = st.form_submit_button("❌ Cancelar", use_container_width=True)
         
         with col_create:
-            create_clicked = st.form_submit_button("✅ Crear Usuario", type="primary")
+            create_clicked = st.form_submit_button("✅ Crear Usuario", type="primary", use_container_width=True)
     
     if cancel_clicked:
         st.rerun()
@@ -899,12 +916,13 @@ def handle_admin_panel():
         _system_tab()
     
     # Botón para volver al selector
-    st.markdown("---")
+
     col1, col2, col3 = st.columns([1, 1, 1])
-    with col2:
-        if st.button("⬅️ Volver al Selector de Autenticación", key="admin_back_to_selector"):
-            if 'auth_method' in st.session_state:
-                del st.session_state.auth_method
+    with col1:
+        if st.button("⬅️ Volver", key="admin_back_to_app"):
+            # En lugar de borrar el método de auth, lo establecemos a 'local_auth'
+            # para que la app principal se renderice.
+            st.session_state.auth_method = "local_auth"
             log_user_action("admin_panel_exit", admin_action=True)
             st.rerun()
     
@@ -2033,7 +2051,7 @@ with st.sidebar:
     """, unsafe_allow_html=True)
     
     # ===== TARJETA DE USUARIO SIMPLE =====
-    fecha_actual = datetime.now().strftime("%d/%m")
+    fecha_actual = datetime.now().strftime("%d/%m/%Y") # Formato con año
     user_initials = ''.join([name[0].upper() for name in user_name.split()[:2]])
     user_display_name = user_name if len(user_name) <= 16 else user_name[:13] + "..."
     
@@ -2064,13 +2082,7 @@ with st.sidebar:
                                auth_method="local_auth",
                                user_email=user_email)
                 
-                # Limpiar chat al cerrar sesión
-                keys_to_clear = ['auth_method', 'user_authenticated', 'user_email', 'display_name', 
-                               'chat_history', 'pydantic_ai_messages', 'streamlit_display_messages']
-                for key in keys_to_clear:
-                    if key in st.session_state:
-                        del st.session_state[key]
-                
+                # Simplemente recargamos la app, el estado de sesión ya está limpio.
                 st.rerun()
     
     # ===== SECCIÓN ADMIN =====
