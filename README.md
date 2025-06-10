@@ -40,11 +40,14 @@ Este proyecto implementa un agente conversacional avanzado construido con **Pyda
 - **Tipos de memoria**: Categorización flexible (jira_alias, soporte, cliente, etc.)
 - **Precargar contexto**: Memoria completa disponible para el agente
 
-### 🔐 **Autenticación y Seguridad**
-- **Google OAuth2**: Autenticación segura multi-usuario
+### 🔐 **Autenticación y Seguridad (NUEVO SISTEMA HÍBRIDO)**
+- **Autenticación híbrida**: Google OAuth2 + Autenticación local
+- **Servidores internos**: Soporte completo para servidores sin dominio público
+- **Panel de administración**: Gestión completa de usuarios y permisos
 - **Credenciales cifradas**: API keys de Atlassian cifradas por usuario
-- **Base de datos segura**: Almacenamiento persistente de credenciales
-- **Modo demo**: Funcionalidad completa sin autenticación para desarrollo
+- **Base de datos segura**: SQLite con 3 tablas para máxima seguridad
+- **Sesiones avanzadas**: Control de expiración y "recordar sesión"
+- **Auditoría completa**: Logs de todas las acciones con Logfire
 
 ### 📊 **Observabilidad y Logging**
 - **Logfire integrado**: Observabilidad completa con trazas distribuidas
@@ -67,6 +70,22 @@ Este proyecto implementa un agente conversacional avanzado construido con **Pyda
 - **Mem0** - Sistema de memoria personalizada
 - **Google OAuth2** - Autenticación segura
 - **uv** - Gestión de dependencias y entorno
+
+## 📚 Documentación Completa
+
+### 🔐 Sistema de Autenticación Híbrido
+- **[📋 Documentación Técnica](docs/AUTHENTICATION_SYSTEM.md)** - Arquitectura y características del sistema
+- **[🚀 Guía de Instalación](docs/INSTALLATION.md)** - Instalación paso a paso en servidor interno
+- **[👑 Manual del Administrador](docs/ADMIN_GUIDE.md)** - Gestión de usuarios y sistema
+- **[🛠️ Troubleshooting](docs/TROUBLESHOOTING.md)** - Resolución de problemas comunes
+
+### 🎯 Características del Sistema Híbrido
+- ✅ **Google OAuth2**: Para servidores con dominio público y HTTPS
+- ✅ **Autenticación Local**: Para servidores internos corporativos
+- ✅ **Panel de Administración**: Gestión completa de usuarios y permisos
+- ✅ **Seguridad Avanzada**: Hash bcrypt, sesiones seguras, auditoría completa
+- ✅ **Escalabilidad**: De 4 usuarios actuales a 50+ usuarios potenciales
+- ✅ **100% Retrocompatible**: Sin pérdida de datos existentes
 
 ## 🚀 Configuración
 

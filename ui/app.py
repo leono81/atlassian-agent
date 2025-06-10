@@ -140,14 +140,54 @@ def save_atlassian_credentials_for_user(user_email: str, api_key: str, atlassian
         st.error(f"Error al manejar credenciales: {str(e)}")
 
 # --- SISTEMA DE AUTENTICACIÓN ---
-def check_authentication():
+
+def show_auth_selector():
     """
-    Verifica si el usuario está autenticado y maneja el flujo de login.
+    Muestra la pantalla de selección de método de autenticación.
+    Retorna el método seleccionado o None si no se ha seleccionado nada.
+    """
+    st.markdown("# 🔐 Agente Atlassian")
+    st.markdown("---")
+    
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.markdown("### Selecciona tu método de autenticación")
+        
+        st.markdown("---")
+        
+        # Opción 1: Google OAuth2
+        google_button_cols = st.columns([1])
+        with google_button_cols[0]:
+            if st.button("Inicie sesión con Google", 
+                        use_container_width=True, 
+                        type="primary",
+                        icon=":material/account_circle:",
+                        key="auth_google",
+                        help="Autenticación con Google OAuth2"):
+                return "google_oauth"
+        
+        st.markdown("")
+        
+        # Opción 2: Autenticación Local
+        if st.button("📧 Inicie sesión con su correo", 
+                    use_container_width=True, 
+                    type="secondary",
+                    key="auth_local"):
+            return "local_auth"
+        
+        st.markdown("---")
+        st.caption("🔒 Todos los métodos garantizan la seguridad de tus datos")
+    
+    return None
+
+def handle_google_oauth_auth():
+    """
+    Maneja la autenticación con Google OAuth2.
     Retorna True si está autenticado, False si no.
     """
     # Verificar si la autenticación nativa está disponible y configurada
     try:
-        # Intentar acceder a st.user de forma segura
+        # Verificar si el usuario ya está logueado
         if hasattr(st, 'user') and hasattr(st.user, 'is_logged_in') and st.user.is_logged_in:
             # Usuario autenticado - establecer contexto de logging
             user_email = getattr(st.user, 'email', 'authenticated_user')
@@ -158,49 +198,45 @@ def check_authentication():
             return True
     except (AttributeError, KeyError) as e:
         # La autenticación nativa no está configurada o disponible
-        logger.info("authentication_not_configured", 
+        logger.info("oauth_not_configured", 
                    reason="oauth_not_available",
-                   fallback_mode="demo_user")
+                   error=str(e))
+    
+    # Mostrar pantalla de login de Google
+    st.markdown("# 🌐 Autenticación con Google")
+    st.markdown("---")
+    
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        # Verificar si OAuth2 está configurado
+        try:
+            # Intentar verificar si los secrets están disponibles
+            if hasattr(st, 'secrets') and 'auth' in st.secrets:
+                oauth_configured = True
+            else:
+                oauth_configured = False
+        except:
+            oauth_configured = False
         
-        # Mostrar mensaje informativo y permitir acceso sin autenticación
-        st.info("ℹ️ **Modo sin autenticación**: La autenticación OAuth2 no está configurada. "
-                "La aplicación funcionará con un usuario por defecto.")
-        
-        with st.expander("🔧 ¿Quieres configurar autenticación multi-usuario?"):
+        if not oauth_configured:
+            st.error("❌ **Google OAuth2 no está configurado**")
             st.markdown("""
-            **Para habilitar autenticación con Google:**
+            **Para configurar Google OAuth2:**
             
             1. 📋 Sigue la guía: `SETUP_OAUTH.md`
             2. 🔑 Configura: `.streamlit/secrets.toml`
             3. ✅ Verifica: `python verify_auth_setup.py`
             4. 🚀 Reinicia la aplicación
-            
-            **Beneficios de la autenticación:**
-            - 👥 Múltiples usuarios
-            - 🔒 Datos privados por usuario
-            - 🧠 Memoria personalizada
-            - 🔐 Acceso seguro
             """)
+            
+            if st.button("⬅️ Volver al selector", key="back_from_google"):
+                if 'auth_method' in st.session_state:
+                    del st.session_state.auth_method
+                st.rerun()
+            return False
         
-        # Establecer contexto de logging para usuario demo
-        _setup_user_logging_context("atlassian_agent_user_001")
-        log_user_action("demo_mode_access", auth_method="demo")
-        
-        # Permitir continuar sin autenticación
-        return True
-    
-    # Si llegamos aquí, la autenticación está disponible pero el usuario no está logueado
-    logger.info("authentication_required", status="not_logged_in")
-    
-    st.markdown("# 🔐 Acceso al Agente Atlassian")
-    st.markdown("---")
-    
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
         st.markdown("""
-        ### Bienvenido al Agente Atlassian
-        
-        Para acceder a la aplicación, necesitas autenticarte con tu cuenta de Google.
+        ### Iniciar Sesión con Google
         
         **Características:**
         - 🤖 Agente inteligente para Jira y Confluence
@@ -212,24 +248,703 @@ def check_authentication():
         st.markdown("---")
         
         # Botón de login centrado
-        if st.button("🚀 Iniciar Sesión con Google", 
-                    use_container_width=True, 
-                    type="primary"):
-            try:
-                log_user_action("login_attempt", auth_method="google_oauth")
-                st.login()
-            except Exception as e:
-                logger.error("login_failed", error=e, auth_method="google_oauth")
-                st.error(f"Error durante el login: {e}")
-                st.info("💡 **Posibles soluciones:**\n"
-                       "- Verifica que hayas configurado correctamente Google OAuth2\n"
-                       "- Revisa el archivo `.streamlit/secrets.toml`\n"
-                       "- Consulta `SETUP_OAUTH.md` para más detalles")
+        col_back, col_login = st.columns([1, 2])
+        
+        with col_back:
+            if st.button("⬅️ Volver", key="back_from_google_login"):
+                if 'auth_method' in st.session_state:
+                    del st.session_state.auth_method
+                st.rerun()
+        
+        with col_login:
+            if st.button("🚀 Iniciar Sesión", 
+                        use_container_width=True, 
+                        type="primary",
+                        key="google_login_btn"):
+                try:
+                    log_user_action("login_attempt", auth_method="google_oauth")
+                    st.login()
+                except Exception as e:
+                    logger.error("login_failed", error=e, auth_method="google_oauth")
+                    st.error(f"Error durante el login: {e}")
+                    st.info("💡 **Posibles soluciones:**\n"
+                           "- Verifica que hayas configurado correctamente Google OAuth2\n"
+                           "- Revisa el archivo `.streamlit/secrets.toml`\n"
+                           "- Consulta `SETUP_OAUTH.md` para más detalles")
         
         st.markdown("---")
         st.caption("🔒 Tu privacidad es importante. Solo accedemos a tu email para identificarte.")
     
     return False
+
+def _setup_local_user_session(user_info: dict, session_id: str):
+    """Establece la sesión local del usuario en Streamlit."""
+    st.session_state.local_user_authenticated = True
+    st.session_state.local_user_email = user_info['user_email']
+    st.session_state.local_user_display_name = user_info['display_name']
+    st.session_state.local_user_is_admin = user_info['is_admin']
+    st.session_state.local_user_session_id = session_id
+    
+    # Establecer contexto de logging
+    _setup_user_logging_context(user_info['user_email'])
+    
+    logger.info("local_user_session_established", 
+               user_email=user_info['user_email'],
+               display_name=user_info['display_name'],
+               is_admin=user_info['is_admin'])
+
+def _clear_local_user_session():
+    """Limpia la sesión local del usuario."""
+    # Invalidar sesión en la base de datos
+    if 'local_user_session_id' in st.session_state:
+        from config.user_credentials_db import user_credentials_db
+        user_credentials_db.invalidate_user_session(st.session_state.local_user_session_id)
+    
+    # Limpiar session state
+    keys_to_remove = [
+        'local_user_authenticated',
+        'local_user_email', 
+        'local_user_display_name',
+        'local_user_is_admin',
+        'local_user_session_id'
+    ]
+    
+    for key in keys_to_remove:
+        if key in st.session_state:
+            del st.session_state[key]
+    
+    logger.info("local_user_session_cleared")
+
+def _validate_local_user_session() -> bool:
+    """Valida la sesión local del usuario."""
+    if not st.session_state.get('local_user_authenticated', False):
+        return False
+    
+    session_id = st.session_state.get('local_user_session_id')
+    if not session_id:
+        return False
+    
+    from config.user_credentials_db import user_credentials_db
+    session_info = user_credentials_db.validate_user_session(session_id)
+    
+    if session_info:
+        # Sesión válida - actualizar información por si cambió
+        st.session_state.local_user_email = session_info['user_email']
+        st.session_state.local_user_display_name = session_info['display_name']
+        st.session_state.local_user_is_admin = session_info['is_admin']
+        return True
+    else:
+        # Sesión inválida - limpiar
+        _clear_local_user_session()
+        return False
+
+def handle_local_auth():
+    """
+    Maneja la autenticación local con base de datos real.
+    Retorna True si está autenticado, False si no.
+    """
+    
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        # Verificar si el usuario ya está logueado localmente
+        if st.session_state.get('local_user_authenticated', False):
+            # Validar que la sesión sigue siendo válida
+            if _validate_local_user_session():
+                user_email = st.session_state.get('local_user_email', 'usuario_local')
+                
+                # Log del acceso exitoso y retornar directamente al agente
+                log_user_action("authentication_success", 
+                               auth_method="local_auth",
+                               user_email=user_email)
+                return True
+            else:
+                # Si la sesión no es válida, limpiarla
+                _clear_local_user_session()
+        
+        # Mostrar formulario de login
+        st.markdown("### Iniciar Sesión")
+        
+        # Importar la base de datos
+        from config.user_credentials_db import user_credentials_db
+        
+        # Verificar si hay usuarios locales creados
+        local_users = user_credentials_db.list_local_users()
+        if not local_users:
+            st.warning("⚠️ **No hay usuarios locales configurados**")
+            st.info("**Para crear el primer usuario:**\n\n"
+                   "1. 🛠️ Ve al **Panel de Administración**\n"
+                   "2. 👤 Crea un usuario administrador\n"
+                   "3. 🔑 Vuelve aquí para iniciar sesión")
+            
+            col_back, col_admin = st.columns([1, 1])
+            
+            with col_back:
+                if st.button("⬅️ Volver al selector", key="back_no_users"):
+                    if 'auth_method' in st.session_state:
+                        del st.session_state.auth_method
+                    st.rerun()
+            
+            with col_admin:
+                if st.button("🛠️ Ir a Panel de Admin", key="go_to_admin"):
+                    st.session_state.auth_method = "admin_panel"
+                    st.rerun()
+            
+            return False
+        
+        # Formulario de login local
+        with st.form("local_login_form"):
+            username = st.text_input("👤 Usuario", placeholder="tu@empresa.com")
+            password = st.text_input("🔒 Contraseña", type="password")
+            remember_me = st.checkbox("🔄 Recordar sesión por 7 días", value=False)
+            
+            col_back, col_login = st.columns([1, 2])
+            
+            with col_back:
+                back_clicked = st.form_submit_button("⬅️ Volver")
+                
+            with col_login:
+                login_clicked = st.form_submit_button("🔑 Iniciar Sesión", type="primary")
+        
+        if back_clicked:
+            if 'auth_method' in st.session_state:
+                del st.session_state.auth_method
+            st.rerun()
+        
+        if login_clicked:
+            if username and password:
+                # Intentar autenticar al usuario
+                user_info = user_credentials_db.verify_local_user(username, password)
+                
+                if user_info:
+                    # Login exitoso
+                    st.success("✅ **Login exitoso**")
+                    
+                    # Crear sesión
+                    session_hours = 168 if remember_me else 24  # 7 días o 24 horas
+                    session_id = user_credentials_db.create_user_session(
+                        user_email=user_info['user_email'],
+                        expires_in_hours=session_hours,
+                        ip_address="127.0.0.1",  # En producción usar st.get_ip() si está disponible
+                        user_agent="Streamlit App"
+                    )
+                    
+                    if session_id:
+                        # Establecer sesión en Streamlit
+                        _setup_local_user_session(user_info, session_id)
+                        
+                        log_user_action("login_success", 
+                                       auth_method="local_auth",
+                                       user_email=user_info['user_email'],
+                                       session_duration_hours=session_hours)
+                        
+                        st.rerun()  # Recargar para mostrar la pantalla de usuario logueado
+                    else:
+                        st.error("❌ Error creando sesión. Intenta nuevamente.")
+                        log_user_action("session_creation_failed", 
+                                       auth_method="local_auth",
+                                       user_email=user_info['user_email'])
+                else:
+                    # Login fallido
+                    st.error("❌ **Credenciales incorrectas**")
+                    st.warning("⚠️ Verifica tu email y contraseña.\n\n"
+                              "Si has olvidado tu contraseña, contacta al administrador.")
+                    
+                    log_user_action("login_failed", 
+                                   auth_method="local_auth",
+                                   username=username,
+                                   reason="invalid_credentials")
+            else:
+                st.error("⚠️ Por favor, completa todos los campos")
+        
+        # Información sobre usuarios disponibles (solo emails, sin mostrar passwords)
+        if local_users:
+            with st.expander("ℹ️ Usuarios disponibles", expanded=False):
+                active_users = [u for u in local_users if u['is_active']]
+                if active_users:
+                    st.markdown("**Usuarios activos:**")
+                    for user in active_users:
+                        status = "👑 Admin" if user['is_admin'] else "👤 Usuario"
+                        last_login = user['last_login'] or "Nunca"
+                        st.markdown(f"- **{user['user_email']}** ({status}) - Último acceso: {last_login}")
+                else:
+                    st.warning("No hay usuarios activos")
+        
+        st.markdown("---")
+        st.caption("🔒 Las contraseñas se almacenan de forma segura con hash y salt")
+    
+    return False
+
+def _validate_admin_access():
+    """Verifica si el usuario actual tiene permisos de administrador."""
+    # Si es usuario local, verificar si es admin
+    if st.session_state.get('local_user_authenticated', False):
+        return st.session_state.get('local_user_is_admin', False)
+    
+    # Para usuarios OAuth2, por ahora permitir acceso (se puede restringir después)
+    try:
+        if hasattr(st, 'user') and hasattr(st.user, 'is_logged_in') and st.user.is_logged_in:
+            return True  # Todos los usuarios OAuth2 son admin por defecto
+    except (AttributeError, KeyError):
+        pass
+    
+    # Para usuario demo, no permitir acceso a admin
+    return False
+
+def _create_user_tab():
+    """Tab para crear nuevos usuarios."""
+    st.markdown("### 👤 Crear Nuevo Usuario")
+    
+    from config.user_credentials_db import user_credentials_db
+    
+    with st.form("create_user_form"):
+        col1, col2 = st.columns([1, 1])
+        
+        with col1:
+            new_email = st.text_input("📧 Email del usuario", placeholder="usuario@empresa.com")
+            new_password = st.text_input("🔒 Contraseña", type="password", placeholder="Mínimo 8 caracteres")
+        
+        with col2:
+            new_display_name = st.text_input("👤 Nombre completo", placeholder="Juan Pérez")
+            is_admin = st.checkbox("⚙️ Permisos de administrador", value=False)
+        
+        col_cancel, col_create = st.columns([1, 2])
+        
+        with col_cancel:
+            cancel_clicked = st.form_submit_button("❌ Cancelar")
+        
+        with col_create:
+            create_clicked = st.form_submit_button("✅ Crear Usuario", type="primary")
+    
+    if cancel_clicked:
+        st.rerun()
+    
+    if create_clicked:
+        if new_email and new_password and new_display_name:
+            # Validaciones básicas
+            if len(new_password) < 8:
+                st.error("❌ La contraseña debe tener al menos 8 caracteres")
+            elif not "@" in new_email:
+                st.error("❌ Email inválido")
+            elif user_credentials_db.local_user_exists(new_email):
+                st.error("❌ Ya existe un usuario con ese email")
+            else:
+                # Crear usuario
+                result = user_credentials_db.create_local_user(
+                    user_email=new_email,
+                    display_name=new_display_name,
+                    password=new_password,
+                    is_admin=is_admin
+                )
+                
+                if result:
+                    st.success(f"✅ Usuario creado exitosamente: {new_display_name}")
+                    log_user_action("user_created", 
+                                   admin_action=True,
+                                   target_user=new_email,
+                                   is_admin=is_admin)
+                    st.rerun()
+                else:
+                    st.error("❌ Error creando usuario. Verifica los datos.")
+        else:
+            st.error("⚠️ Por favor completa todos los campos")
+
+def _manage_users_tab():
+    """Tab para gestionar usuarios existentes."""
+    st.markdown("### 👥 Gestionar Usuarios")
+    
+    from config.user_credentials_db import user_credentials_db
+    
+    # Listar usuarios
+    users = user_credentials_db.list_local_users()
+    
+    if not users:
+        st.info("ℹ️ No hay usuarios locales creados.")
+        return
+    
+    st.markdown(f"**Total de usuarios:** {len(users)}")
+    
+    # Tabla de usuarios
+    for i, user in enumerate(users):
+        with st.expander(f"👤 {user['display_name']} ({user['user_email']})", expanded=False):
+            col1, col2, col3 = st.columns([2, 1, 1])
+            
+            with col1:
+                st.markdown(f"**Email:** {user['user_email']}")
+                st.markdown(f"**Nombre:** {user['display_name']}")
+                st.markdown(f"**Estado:** {'✅ Activo' if user['is_active'] else '❌ Inactivo'}")
+                st.markdown(f"**Admin:** {'👑 Sí' if user['is_admin'] else '👤 No'}")
+                st.markdown(f"**Creado:** {user['created_at']}")
+                st.markdown(f"**Último acceso:** {user['last_login'] or 'Nunca'}")
+                if user['failed_login_attempts'] > 0:
+                    st.markdown(f"**Intentos fallidos:** {user['failed_login_attempts']}")
+            
+            with col2:
+                # Cambiar estado
+                current_status = user['is_active']
+                new_status = st.toggle(
+                    f"Activo", 
+                    value=current_status,
+                    key=f"toggle_status_{user['user_email']}"
+                )
+                
+                if new_status != current_status:
+                    result = user_credentials_db.toggle_local_user_status(
+                        user['user_email'], 
+                        new_status
+                    )
+                    if result:
+                        status_text = "activado" if new_status else "desactivado"
+                        st.success(f"Usuario {status_text}")
+                        log_user_action("user_status_changed", 
+                                       admin_action=True,
+                                       target_user=user['user_email'],
+                                       new_status=status_text)
+                        st.rerun()
+                    else:
+                        st.error("Error cambiando estado")
+            
+            with col3:
+                # Acciones
+                if st.button("🔒 Resetear Password", key=f"reset_pwd_{user['user_email']}"):
+                    st.session_state[f'reset_password_for'] = user['user_email']
+                    st.rerun()
+                
+                if st.button("🗑️ Eliminar", key=f"delete_{user['user_email']}", type="secondary"):
+                    st.session_state[f'delete_user'] = user['user_email']
+                    st.rerun()
+    
+    # Manejar reset de contraseña
+    if 'reset_password_for' in st.session_state:
+        user_email = st.session_state['reset_password_for']
+        st.markdown("---")
+        st.markdown(f"### 🔒 Resetear contraseña para: {user_email}")
+        
+        with st.form(f"reset_password_form"):
+            new_password = st.text_input("Nueva contraseña", type="password", placeholder="Mínimo 8 caracteres")
+            confirm_password = st.text_input("Confirmar contraseña", type="password")
+            
+            col_cancel, col_reset = st.columns([1, 1])
+            
+            with col_cancel:
+                if st.form_submit_button("Cancelar"):
+                    del st.session_state['reset_password_for']
+                    st.rerun()
+            
+            with col_reset:
+                if st.form_submit_button("🔒 Resetear", type="primary"):
+                    if new_password and confirm_password:
+                        if new_password == confirm_password:
+                            if len(new_password) >= 8:
+                                result = user_credentials_db.update_local_user_password(
+                                    user_email, new_password
+                                )
+                                if result:
+                                    st.success("✅ Contraseña reseteada exitosamente")
+                                    log_user_action("password_reset", 
+                                                   admin_action=True,
+                                                   target_user=user_email)
+                                    del st.session_state['reset_password_for']
+                                    st.rerun()
+                                else:
+                                    st.error("❌ Error reseteando contraseña")
+                            else:
+                                st.error("❌ La contraseña debe tener al menos 8 caracteres")
+                        else:
+                            st.error("❌ Las contraseñas no coinciden")
+                    else:
+                        st.error("⚠️ Completa ambos campos")
+    
+    # Manejar eliminación de usuario
+    if 'delete_user' in st.session_state:
+        user_email = st.session_state['delete_user']
+        st.markdown("---")
+        st.error(f"### ⚠️ ¿Eliminar usuario: {user_email}?")
+        st.warning("Esta acción no se puede deshacer. Se eliminarán todas las sesiones del usuario.")
+        
+        col_cancel, col_delete = st.columns([1, 1])
+        
+        with col_cancel:
+            if st.button("Cancelar eliminación", key="cancel_delete"):
+                del st.session_state['delete_user']
+                st.rerun()
+        
+        with col_delete:
+            if st.button("🗑️ ELIMINAR", key="confirm_delete", type="primary"):
+                result = user_credentials_db.delete_local_user(user_email)
+                if result:
+                    st.success(f"✅ Usuario {user_email} eliminado")
+                    log_user_action("user_deleted", 
+                                   admin_action=True,
+                                   target_user=user_email)
+                    del st.session_state['delete_user']
+                    st.rerun()
+                else:
+                    st.error("❌ Error eliminando usuario")
+
+def _statistics_tab():
+    """Tab para ver estadísticas del sistema."""
+    st.markdown("### 📊 Estadísticas del Sistema")
+    
+    from config.user_credentials_db import user_credentials_db
+    
+    # Estadísticas de usuarios
+    users = user_credentials_db.list_local_users()
+    active_users = [u for u in users if u['is_active']]
+    admin_users = [u for u in users if u['is_admin']]
+    users_with_login = [u for u in users if u['last_login']]
+    
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric("👥 Total Usuarios", len(users))
+    
+    with col2:
+        st.metric("✅ Usuarios Activos", len(active_users))
+    
+    with col3:
+        st.metric("👑 Administradores", len(admin_users))
+    
+    with col4:
+        st.metric("🔐 Con Login", len(users_with_login))
+    
+    # Gráfico de usuarios por estado
+    if users:
+        st.markdown("#### Estados de Usuario")
+        active_count = len(active_users)
+        inactive_count = len(users) - active_count
+        
+        col1, col2 = st.columns([1, 2])
+        
+        with col1:
+            st.markdown(f"**Activos:** {active_count}")
+            st.markdown(f"**Inactivos:** {inactive_count}")
+        
+        with col2:
+            # Datos para gráfico simple con barras de progreso
+            if active_count > 0:
+                st.progress(active_count / len(users), text=f"Usuarios Activos: {active_count}")
+            if admin_users:
+                st.progress(len(admin_users) / len(users), text=f"Administradores: {len(admin_users)}")
+    
+    # Estadísticas de credenciales Atlassian
+    st.markdown("---")
+    st.markdown("#### 🔗 Credenciales Atlassian")
+    
+    atlassian_users = user_credentials_db.list_users()
+    st.metric("🔑 Usuarios con credenciales Atlassian", len(atlassian_users))
+    
+    if atlassian_users:
+        st.markdown("**Usuarios con acceso a Atlassian:**")
+        for user_email, atlassian_username, updated_at in atlassian_users:
+            st.markdown(f"- **{user_email}** → {atlassian_username} (actualizado: {updated_at})")
+
+def _logs_tab():
+    """Tab para ver logs del sistema."""
+    st.markdown("### 📋 Logs del Sistema")
+    
+    st.info("ℹ️ Los logs completos están disponibles en el dashboard de **Logfire**")
+    st.markdown("🔗 **Dashboard de Logfire**: https://logfire-us.pydantic.dev/")
+    
+    # Simulación de logs recientes (en producción, esto vendría de Logfire API)
+    st.markdown("#### 🕐 Actividad Reciente")
+    
+    sample_logs = [
+        {"timestamp": "2024-01-15 10:30:15", "action": "login_success", "user": "admin@empresa.com", "method": "local_auth"},
+        {"timestamp": "2024-01-15 10:25:42", "action": "user_created", "user": "admin@empresa.com", "target": "nuevo@empresa.com"},
+        {"timestamp": "2024-01-15 10:20:18", "action": "authentication_success", "user": "usuario@empresa.com", "method": "local_auth"},
+        {"timestamp": "2024-01-15 10:15:33", "action": "login_failed", "user": "test@empresa.com", "reason": "invalid_credentials"},
+        {"timestamp": "2024-01-15 10:10:07", "action": "admin_panel_access", "user": "admin@empresa.com", "status": "authorized"},
+    ]
+    
+    for log in sample_logs:
+        with st.expander(f"📋 {log['timestamp']} - {log['action']}", expanded=False):
+            st.json(log)
+    
+    st.markdown("#### 📊 Métricas de Logging")
+    st.markdown("""
+    **Eventos monitoreados:**
+    - ✅ `login_success` / `login_failed` - Intentos de autenticación
+    - 👤 `user_created` / `user_deleted` - Gestión de usuarios
+    - 🔒 `password_reset` - Cambios de contraseña
+    - 📊 `admin_panel_access` - Accesos al panel de admin
+    - 🎫 `session_created` / `session_invalidated` - Gestión de sesiones
+    - 📈 `user_action` - Acciones generales del usuario
+    """)
+
+def _system_tab():
+    """Tab para configuración del sistema."""
+    st.markdown("### ⚙️ Configuración del Sistema")
+    
+    from config.user_credentials_db import user_credentials_db
+    from pathlib import Path
+    
+    # Información del sistema
+    st.markdown("#### 💾 Base de Datos")
+    
+    db_path = Path(".streamlit/user_credentials.db")
+    if db_path.exists():
+        db_size = db_path.stat().st_size
+        st.success(f"✅ Base de datos activa: {db_size} bytes")
+    else:
+        st.error("❌ Base de datos no encontrada")
+    
+    col1, col2 = st.columns([1, 1])
+    
+    with col1:
+        if st.button("🔄 Verificar Conexión BD"):
+            try:
+                # Test simple de conexión
+                users = user_credentials_db.list_local_users()
+                st.success(f"✅ Conexión exitosa. {len(users)} usuarios encontrados.")
+            except Exception as e:
+                st.error(f"❌ Error de conexión: {e}")
+    
+    with col2:
+        if st.button("📊 Estadísticas BD"):
+            try:
+                users = user_credentials_db.list_local_users()
+                atlassian_users = user_credentials_db.list_users()
+                
+                st.info(f"""
+                **Estadísticas de la Base de Datos:**
+                - 👥 Usuarios locales: {len(users)}
+                - 🔗 Credenciales Atlassian: {len(atlassian_users)}
+                - 📊 Tablas: 3 (user_credentials, local_users, local_user_sessions)
+                """)
+            except Exception as e:
+                st.error(f"❌ Error obteniendo estadísticas: {e}")
+    
+    # Políticas de seguridad
+    st.markdown("---")
+    st.markdown("#### 🛡️ Políticas de Seguridad")
+    
+    st.markdown("""
+    **Configuración actual:**
+    - 🔒 **Hashing**: bcrypt con salt único
+    - 🎫 **Sesiones**: 24 horas (standard), 7 días (recordar)
+    - 🚫 **Bloqueo**: 5 intentos fallidos
+    - 🔐 **Contraseñas**: Mínimo 8 caracteres
+    - 📊 **Logging**: Todos los eventos registrados
+    """)
+    
+    # Acciones administrativas
+    st.markdown("---")
+    st.markdown("#### 🚨 Acciones Administrativas")
+    
+    st.warning("⚠️ **Acciones peligrosas - Usar con precaución**")
+    
+    col1, col2 = st.columns([1, 1])
+    
+    with col1:
+        if st.button("🧹 Limpiar Sesiones Expiradas", type="secondary"):
+            # En una implementación real, esto limpiaría sesiones expiradas
+            st.info("🧹 Funcionalidad de limpieza ejecutada (simulada)")
+            log_user_action("cleanup_expired_sessions", admin_action=True)
+    
+    with col2:
+        if st.button("📋 Exportar Logs de Usuario", type="secondary"):
+            st.info("📋 Exportación de logs disponible en el dashboard de Logfire")
+            log_user_action("export_logs_requested", admin_action=True)
+
+def handle_admin_panel():
+    """
+    Maneja el panel de administración completo.
+    Retorna True si se debe continuar, False si no.
+    """
+    st.markdown("# ⚙️ Panel de Administración")
+    st.markdown("---")
+    
+    # Verificar permisos de administrador
+    if not _validate_admin_access():
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            st.error("🚫 **Acceso Denegado**")
+            st.warning("Solo los administradores pueden acceder a este panel.")
+            
+            if st.button("⬅️ Volver al selector", key="access_denied_back"):
+                if 'auth_method' in st.session_state:
+                    del st.session_state.auth_method
+                st.rerun()
+            
+            log_user_action("admin_panel_access_denied", 
+                           admin_action=False,
+                           reason="insufficient_permissions")
+        return False
+    
+    # Panel de administración para usuarios autorizados
+    st.success(f"👑 **Bienvenido al Panel de Administración**")
+    
+    # Tabs del panel de administración
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "👤 Crear Usuario", 
+        "👥 Gestionar Usuarios", 
+        "📊 Estadísticas",
+        "📋 Logs",
+        "⚙️ Sistema"
+    ])
+    
+    with tab1:
+        _create_user_tab()
+    
+    with tab2:
+        _manage_users_tab()
+    
+    with tab3:
+        _statistics_tab()
+    
+    with tab4:
+        _logs_tab()
+    
+    with tab5:
+        _system_tab()
+    
+    # Botón para volver al selector
+    st.markdown("---")
+    col1, col2, col3 = st.columns([1, 1, 1])
+    with col2:
+        if st.button("⬅️ Volver al Selector de Autenticación", key="admin_back_to_selector"):
+            if 'auth_method' in st.session_state:
+                del st.session_state.auth_method
+            log_user_action("admin_panel_exit", admin_action=True)
+            st.rerun()
+    
+    log_user_action("admin_panel_access", 
+                   admin_action=True,
+                   status="authorized")
+    
+    return False  # Nunca continúa a la aplicación principal
+
+def check_authentication():
+    """
+    Función principal de autenticación que maneja el flujo completo.
+    Retorna True si el usuario está autenticado, False si no.
+    """
+    # Verificar si ya tenemos un método de autenticación seleccionado
+    if 'auth_method' not in st.session_state:
+        # Mostrar selector de método de autenticación
+        selected_method = show_auth_selector()
+        
+        if selected_method:
+            st.session_state.auth_method = selected_method
+            st.rerun()  # Recargar para mostrar el método seleccionado
+        
+        return False  # No autenticado aún
+    
+    # Manejar el método seleccionado
+    auth_method = st.session_state.auth_method
+    
+    if auth_method == "google_oauth":
+        return handle_google_oauth_auth()
+    elif auth_method == "local_auth":
+        return handle_local_auth()
+    elif auth_method == "admin_panel":
+        # El panel de admin maneja su propia autenticación
+        return handle_admin_panel()
+    else:
+        # Método desconocido, volver al selector
+        del st.session_state.auth_method
+        st.rerun()
+        return False
 
 def _setup_user_logging_context(user_email: str):
     """Establece el contexto de logging para el usuario actual."""
@@ -249,6 +964,13 @@ if not check_authentication():
 # Usuario autenticado - continuar con la aplicación
 def get_user_info():
     """Obtiene información del usuario de forma segura."""
+    # Prioridad 1: Usuario local autenticado
+    if st.session_state.get('local_user_authenticated', False):
+        email = st.session_state.get('local_user_email', 'usuario_local')
+        name = st.session_state.get('local_user_display_name', email)
+        return email, name
+    
+    # Prioridad 2: Usuario OAuth2 (Google)
     try:
         if hasattr(st, 'user') and hasattr(st.user, 'is_logged_in') and st.user.is_logged_in:
             email = getattr(st.user, 'email', 'usuario_autenticado')
@@ -261,6 +983,29 @@ def get_user_info():
     return "atlassian_agent_user_001", "Usuario Demo"
 
 current_user, user_name = get_user_info()
+
+# ===== DETECCIÓN DE CAMBIO DE USUARIO - LIMPIAR CHAT =====
+# Verificar si cambió el usuario para limpiar el chat
+last_user = st.session_state.get('last_logged_user', None)
+if last_user and last_user != current_user:
+    # Usuario diferente detectado - limpiar chat y contexto
+    chat_keys_to_clear = [
+        'chat_history', 
+        'pydantic_ai_messages', 
+        'streamlit_display_messages',
+        'memoria_usuario'  # También limpiar memoria para nuevo usuario
+    ]
+    for key in chat_keys_to_clear:
+        if key in st.session_state:
+            del st.session_state[key]
+    
+    # Log del cambio de usuario
+    log_user_action("user_switched", 
+                   previous_user=last_user,
+                   new_user=current_user)
+
+# Actualizar el último usuario logueado
+st.session_state['last_logged_user'] = current_user
 
 # Log del inicio de sesión de usuario
 log_user_action("session_loaded", 
@@ -682,35 +1427,191 @@ if "atlassian_api_key" not in st.session_state or "atlassian_username" not in st
         logfire.info(f"No se encontraron credenciales de Atlassian persistentes completas para {current_user}.")
 
 # --- INTERFAZ PRINCIPAL DEL CHAT ---
-# Títulos compactos en la parte superior
-st.markdown(f"""
-<div style="text-align: center; margin: 0 0 10px 0;">
-    <h1 style="
-        font-family: 'Poppins', sans-serif;
-        font-size: 1.8rem;
-        font-weight: 700;
-        color: #1e3a8a;
-        margin: 0 0 5px 0;
-        background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%);
+
+# Mostrar botón de Panel de Admin si el usuario es administrador
+def _check_if_current_user_is_admin():
+    """Verifica si el usuario actual tiene permisos de administrador."""
+    # Usuario local autenticado
+    if st.session_state.get('local_user_authenticated', False):
+        return st.session_state.get('local_user_is_admin', False)
+    
+    # Usuario OAuth2 - por ahora todos son admin por defecto
+    try:
+        if hasattr(st, 'user') and hasattr(st.user, 'is_logged_in') and st.user.is_logged_in:
+            return True  # Todos los usuarios OAuth2 son admin por defecto
+    except (AttributeError, KeyError):
+        pass
+    
+    return False
+
+# ===== ÁREA PRINCIPAL DEL CHAT =====
+
+def create_styled_container(container_id: str, css_styles: str):
+    """Crea un contenedor con ID único usando el método robusto de la comunidad Streamlit"""
+    plh = st.container()
+    html_code = f"""<div id='marker_outer_{container_id}'></div>"""
+    st.markdown(html_code, unsafe_allow_html=True)
+    
+    with plh:
+        inner_html_code = f"""<div id='marker_inner_{container_id}'></div>"""
+        plh.markdown(inner_html_code, unsafe_allow_html=True)
+    
+    style = f"""
+    <style>
+        div[data-testid='stVerticalBlock']:has(div#marker_inner_{container_id}):not(:has(div#marker_outer_{container_id})) {{
+            {css_styles}
+        }}
+    </style>
+    """
+    st.markdown(style, unsafe_allow_html=True)
+    return plh
+
+# ===== CSS ROBUSTO BASADO EN INVESTIGACIÓN =====
+st.markdown("""
+<style>
+    /* ===== ESTILOS PARA ÁREA PRINCIPAL (MÉTODOS ROBUSTOS) ===== */
+    
+    /* Título principal elegante - MÉTODO DIRECTO SIN VARIABLES CSS */
+    .main-title {
+        text-align: center;
+        background: linear-gradient(135deg, #4a9eff, #00d084);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
         background-clip: text;
-    ">🤖 Agente Atlassian</h1>
-</div>
+        font-size: 2.5rem;
+        font-weight: 700;
+        margin-bottom: 2rem;
+        text-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    
+    /* Container de chat minimalista - DISEÑO LIMPIO */
+    div[data-testid="stChatFloatingInputContainer"] {
+        background: transparent !important;
+        border: 1px solid rgba(255, 255, 255, 0.15) !important;
+        border-radius: 8px !important;
+        backdrop-filter: none !important;
+    }
+    
+    /* Input de chat limpio */
+    div[data-testid="stChatInput"] input {
+        background: transparent !important;
+        border: none !important;
+        color: #ffffff !important;
+        font-size: 14px !important;
+        font-weight: 400 !important;
+        padding: 14px 16px !important;
+    }
+    
+    div[data-testid="stChatInput"] input::placeholder {
+        color: #9ca3af !important;
+        font-style: normal !important;
+    }
+    
+    /* Botón de envío empresarial */
+    div[data-testid="stChatInput"] button {
+        background: #4a9eff !important;
+        border: none !important;
+        border-radius: 6px !important;
+        color: white !important;
+        transition: background-color 0.2s ease !important;
+    }
+    
+    div[data-testid="stChatInput"] button:hover {
+        background: #3d8bfd !important;
+        transform: none !important;
+        box-shadow: none !important;
+    }
+    
+    /* Mensajes de chat minimalistas */
+    div[data-testid="stChatMessage"] {
+        background: transparent !important;
+        border: none !important;
+        border-radius: 0 !important;
+        margin-bottom: 16px !important;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
+        padding-bottom: 16px !important;
+        backdrop-filter: none !important;
+        transition: none !important;
+    }
+    
+    div[data-testid="stChatMessage"]:hover {
+        background: transparent !important;
+        border-color: rgba(255, 255, 255, 0.08) !important;
+    }
+    
+    /* Avatar de usuario */
+    div[data-testid="stChatMessage"] img[alt="👤"] {
+        border-radius: 50% !important;
+        box-shadow: 0 2px 8px rgba(74, 158, 255, 0.3) !important;
+    }
+    
+    /* Avatar de asistente */
+    div[data-testid="stChatMessage"] img[alt="🤖"] {
+        border-radius: 50% !important;
+        box-shadow: 0 2px 8px rgba(0, 208, 132, 0.3) !important;
+    }
+    
+    /* Container de chat minimalista */
+    div[data-testid="stVerticalBlock"] div[data-testid="stVerticalBlock"] {
+        background: transparent !important;
+        border: none !important;
+        border-radius: 0 !important;
+        backdrop-filter: none !important;
+    }
+    
+    /* Scrollbar para el chat */
+    div[data-testid="stVerticalBlock"]::-webkit-scrollbar {
+        width: 6px;
+    }
+    
+    div[data-testid="stVerticalBlock"]::-webkit-scrollbar-track {
+        background: rgba(255, 255, 255, 0.05);
+        border-radius: 3px;
+    }
+    
+    div[data-testid="stVerticalBlock"]::-webkit-scrollbar-thumb {
+        background: linear-gradient(135deg, #4a9eff, #00d084);
+        border-radius: 3px;
+    }
+    
+    div[data-testid="stVerticalBlock"]::-webkit-scrollbar-thumb:hover {
+        background: linear-gradient(135deg, #3d8bfd, #00c077);
+    }
+</style>
 """, unsafe_allow_html=True)
 
-# Container para mensajes con altura maximizada
-# Altura dinámica optimizada para aprovechar más espacio
-chat_height = 650  # Aumentado para aprovechar el espacio ganado
-chat_container = st.container(height=chat_height, border=True)
+# Título principal con estilo - SOLO UNO, SIN DUPLICADOS
+st.markdown('<h1 class="main-title">🤖 Agente Atlassian</h1>', unsafe_allow_html=True)
+
+# Container para mensajes con diseño moderno
+chat_height = 650
+chat_container = st.container(height=chat_height, border=False)
 with chat_container:
-    for message in st.session_state.chat_history:
-        if message["role"] == "user":
-            with st.chat_message("user", avatar="👤"):
-                st.markdown(message["content"])
-        elif message["role"] == "assistant":
-            with st.chat_message("assistant", avatar="🤖"):
-                st.markdown(message["content"])
+    if not st.session_state.chat_history:
+        # Placeholder elegante cuando no hay mensajes
+        st.markdown("""
+        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; text-align: center; padding: 2rem;">
+            <div style="font-size: 4rem; margin-bottom: 1rem; opacity: 0.7;">🤖</div>
+            <h3 style="color: #b3b3b3; font-weight: 500; margin-bottom: 0.5rem;">¡Hola! Soy tu Agente Atlassian</h3>
+            <p style="color: #808080; font-size: 14px; max-width: 400px; line-height: 1.5;">
+                Puedo ayudarte con Jira, Confluence y cualquier consulta que necesites. 
+                ¡Escribe tu pregunta abajo para comenzar!
+            </p>
+            <div style="margin-top: 1.5rem; padding: 1rem; background: rgba(74, 158, 255, 0.1); border: 1px solid rgba(74, 158, 255, 0.3); border-radius: 8px; max-width: 500px;">
+                <p style="color: #4a9eff; font-size: 12px; margin: 0;">
+                    💡 <strong>Consejo:</strong> Para consultas de Atlassian, asegúrate de configurar tus credenciales en la barra lateral.
+                </p>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        for message in st.session_state.chat_history:
+            if message["role"] == "user":
+                with st.chat_message("user", avatar="👤"):
+                    st.markdown(message["content"])
+            elif message["role"] == "assistant":
+                with st.chat_message("assistant", avatar="🤖"):
+                    st.markdown(message["content"])
 
 # Chat input siempre visible en la parte inferior
 if prompt := st.chat_input("💬 Escribe tu consulta aquí...", key="main_chat"):
@@ -892,305 +1793,397 @@ if prompt := st.chat_input("💬 Escribe tu consulta aquí...", key="main_chat")
     st.rerun()
 
 # --- SIDEBAR ---
-# Información del usuario minimalista y elegante
+# ========== DISEÑO UX/UI PROFESIONAL CON MÉTODOS ROBUSTOS ==========
 with st.sidebar:
-    st.markdown(f"""
+    st.markdown("""
     <style>
-        .user-info-flex {{
+        /* ===== SISTEMA DE DISEÑO ROBUSTO SIN VARIABLES CSS ===== */
+        
+        /* Reset y base para sidebar - VALORES DIRECTOS */
+        div[data-testid="stSidebar"] {
+            background: #1e1e1e !important;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif !important;
+        }
+        
+        /* ===== SECCIÓN USUARIO MINIMALISTA ===== */
+        .user-card {
+            background: transparent;
+            border: none;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 0;
+            padding: 0 0 16px 0;
+            margin-bottom: 24px;
+            backdrop-filter: none;
+            transition: none;
+        }
+        
+        .user-card:hover {
+            background: transparent;
+            border-color: rgba(255, 255, 255, 0.15);
+        }
+        
+        .user-header {
             display: flex;
             align-items: center;
-            gap: 10px;
-            padding: 5px 8px;
-            border-radius: 8px;
-            background-color: rgba(255,255,255,0.05);
-            border: 1px solid rgba(255,255,255,0.1);
-            margin-bottom: 12px;
-            position: relative;
-            transition: background 0.2s;
-        }}
-        .user-avatar {{
+            justify-content: space-between;
+            margin-bottom: 4px;
+        }
+        
+        .user-info {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex: 1;
+        }
+        
+        .user-avatar {
             width: 32px;
             height: 32px;
             border-radius: 50%;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, #4a9eff, #00d084);
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 14px;
+            font-size: 12px;
             font-weight: 600;
             color: white;
             flex-shrink: 0;
-        }}
-        .user-name {{
-            font-size: 14px;
+            box-shadow: 0 2px 8px rgba(74, 158, 255, 0.3);
+        }
+        
+        .user-name {
+            font-size: 13px;
             font-weight: 500;
-            color: #fff;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-            max-width: 110px;
-            position: relative;
-            cursor: pointer;
-        }}
-        .user-name:hover + .user-tooltip {{
-            display: block;
-        }}
-
-        .user-tooltip {{
-            display: none;
-            position: absolute;
-            left: 0;
-            top: 110%;
-            background: rgba(0,0,0,0.95);
-            color: #fff;
-            border-radius: 8px;
-            padding: 8px 12px;
+            color: #ffffff;
+            line-height: 1.2;
+        }
+        
+        .user-date {
             font-size: 12px;
-            z-index: 10;
-            min-width: 180px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-        }}
+            color: #9ca3af;
+            text-align: right;
+            margin-bottom: 8px;
+            font-weight: 500;
+        }
         
+        /* ===== BOTONES SISTEMA ===== */
+        .action-buttons {
+            display: flex;
+            gap: 4px;
+            margin-top: 8px;
+        }
         
-        /* Estilos para la sección de memoria - 14px */
-        div[data-testid="stSidebar"] .stToggle label {{
-            font-size: 14px !important;
-        }}
-        div[data-testid="stSidebar"] .stPopover button {{
-            font-size: 14px !important;
-        }}
-        div[data-testid="stSidebar"] .stPopover .stMarkdown {{
-            font-size: 14px !important;
-        }}
-        div[data-testid="stSidebar"] .stPopover .stMarkdown p {{
-            font-size: 14px !important;
-        }}
-        div[data-testid="stSidebar"] .stPopover .stMarkdown li {{
-            font-size: 14px !important;
-        }}
+        /* Botones principales */
+        div[data-testid="stSidebar"] button[kind="primary"] {
+            background: linear-gradient(135deg, #4a9eff, #3d8bfd) !important;
+            border: none !important;
+            border-radius: 6px !important;
+            color: white !important;
+            font-size: 11px !important;
+            font-weight: 500 !important;
+            height: 32px !important;
+            padding: 0 12px !important;
+            transition: all 0.15s ease !important;
+            box-shadow: 0 2px 4px rgba(74, 158, 255, 0.3) !important;
+        }
+        
+        div[data-testid="stSidebar"] button[kind="primary"]:hover {
+            transform: translateY(-1px) !important;
+            box-shadow: 0 4px 8px rgba(74, 158, 255, 0.4) !important;
+        }
+        
+        /* Botones secundarios */
+        div[data-testid="stSidebar"] button[kind="secondary"] {
+            background: rgba(255, 255, 255, 0.08) !important;
+            border: 1px solid rgba(255, 255, 255, 0.12) !important;
+            border-radius: 6px !important;
+            color: #b3b3b3 !important;
+            font-size: 11px !important;
+            font-weight: 500 !important;
+            height: 32px !important;
+            padding: 0 12px !important;
+            transition: all 0.15s ease !important;
+        }
+        
+        div[data-testid="stSidebar"] button[kind="secondary"]:hover {
+            background: rgba(255, 255, 255, 0.12) !important;
+            border-color: rgba(255, 255, 255, 0.3) !important;
+        }
+        
+
+        
+
+        
+        /* ===== SECCIONES SIN TÍTULOS - ULTRA MINIMALISTA ===== */
+        .content-section {
+            background: transparent;
+            border: none;
+            border-radius: 0;
+            padding: 0;
+            margin-bottom: 24px;
+        }
+        
+        /* ===== TOGGLE Y CONTROLES ===== */
+        div[data-testid="stSidebar"] .stToggle {
+            margin-bottom: 8px !important;
+        }
+        
+        div[data-testid="stSidebar"] .stToggle label {
+            font-size: 11px !important;
+            color: #b3b3b3 !important;
+            font-weight: 500 !important;
+        }
+        
+        /* ===== POPOVER MODERNA ===== */
+        div[data-testid="stSidebar"] .stPopover button {
+            background: rgba(255, 255, 255, 0.08) !important;
+            border: 1px solid rgba(255, 255, 255, 0.12) !important;
+            border-radius: 6px !important;
+            color: #b3b3b3 !important;
+            font-size: 10px !important;
+            height: 28px !important;
+            transition: all 0.15s ease !important;
+        }
+        
+        div[data-testid="stSidebar"] .stPopover button:hover {
+            background: rgba(255, 255, 255, 0.12) !important;
+            border-color: rgba(255, 255, 255, 0.3) !important;
+        }
+        
+        /* ===== ESTADOS Y ALERTAS ===== */
+        div[data-testid="stSidebar"] .stSuccess {
+            background: rgba(0, 208, 132, 0.1) !important;
+            border: 1px solid rgba(0, 208, 132, 0.3) !important;
+            border-radius: 6px !important;
+            color: #00d084 !important;
+            font-size: 10px !important;
+            padding: 4px 8px !important;
+        }
+        
+        div[data-testid="stSidebar"] .stError {
+            background: rgba(255, 107, 53, 0.1) !important;
+            border: 1px solid rgba(255, 107, 53, 0.3) !important;
+            border-radius: 6px !important;
+            color: #ff6b35 !important;
+            font-size: 10px !important;
+            padding: 4px 8px !important;
+        }
+        
+        /* ===== INPUTS MODERNOS ===== */
+        div[data-testid="stSidebar"] .stTextInput input {
+            background: rgba(255, 255, 255, 0.05) !important;
+            border: 1px solid rgba(255, 255, 255, 0.12) !important;
+            border-radius: 6px !important;
+            color: #ffffff !important;
+            font-size: 10px !important;
+            height: 32px !important;
+            padding: 0 8px !important;
+        }
+        
+        div[data-testid="stSidebar"] .stTextInput input:focus {
+            border-color: #4a9eff !important;
+            box-shadow: 0 0 0 2px rgba(74, 158, 255, 0.2) !important;
+        }
+        
+        div[data-testid="stSidebar"] .stTextInput label {
+            font-size: 10px !important;
+            color: #b3b3b3 !important;
+            font-weight: 500 !important;
+        }
+        
+        /* ===== SEPARADORES ELEGANTES ===== */
+        div[data-testid="stSidebar"] hr {
+            border: none !important;
+            height: 1px !important;
+            background: rgba(255, 255, 255, 0.12) !important;
+            margin: 12px 0 !important;
+        }
+        
+        /* ===== SCROLLBAR PERSONALIZADA ===== */
+        div[data-testid="stSidebar"] ::-webkit-scrollbar {
+            width: 4px;
+        }
+        
+        div[data-testid="stSidebar"] ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        
+        div[data-testid="stSidebar"] ::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.12);
+            border-radius: 2px;
+        }
+        
+        div[data-testid="stSidebar"] ::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+        
+        /* ===== ANIMACIONES SUTILES ===== */
+        div[data-testid="stSidebar"] * {
+            transition: all 0.15s ease;
+        }
+        
+        /* ===== RESPONSIVE ===== */
+        @media (max-height: 800px) {
+            .content-section {
+                padding: 8px;
+                margin-bottom: 8px;
+            }
+        }
     </style>
     """, unsafe_allow_html=True)
-    # Mostrar fecha actual
-    fecha_actual = datetime.now().strftime("%d de %B, %Y")
-    st.sidebar.markdown(f'<div class="fecha-sidebar">📅 {fecha_actual}</div>', unsafe_allow_html=True)
-    st.sidebar.markdown("---")
-    # Obtener iniciales del usuario para el avatar
+    
+    # ===== TARJETA DE USUARIO SIMPLE =====
+    fecha_actual = datetime.now().strftime("%d/%m")
     user_initials = ''.join([name[0].upper() for name in user_name.split()[:2]])
+    user_display_name = user_name if len(user_name) <= 16 else user_name[:13] + "..."
     
-    # Verificar si la autenticación está disponible
-    auth_available = False
-    try:
-        if hasattr(st, 'user') and hasattr(st.user, 'is_logged_in') and st.user.is_logged_in:
-            auth_available = True
-    except (AttributeError, KeyError):
-        pass
+    # Verificar si hay sesión activa
+    is_logged_in = st.session_state.get('local_user_authenticated', False)
     
-    if auth_available:
-        # Usuario autenticado con hover tooltip y botón integrado
-        user_display_name = user_name if len(user_name) <= 20 else user_name[:17] + "..."
-        
-                # Crear un contenedor único con flexbox para alineación perfecta
+    # Usar columnas para alinear el nombre y el botón de logout
+    col1, col2 = st.columns([0.85, 0.15])
+
+    with col1:
         st.markdown(f"""
-        <div class="user-info-flex">
-            <div class="user-avatar">{user_initials}</div>
-            <div style="display: flex; flex-direction: column; flex: 1;">
-                <div class="user-name" title="{user_name}">{user_display_name}</div>
-                <div class="user-tooltip">{current_user}</div>
+        <div class="user-card">
+            <div class="user-header">
+                <div class="user-info">
+                    <div class="user-avatar">{user_initials}</div>
+                    <div class="user-name">{user_display_name}</div>
+                </div>
             </div>
         </div>
         """, unsafe_allow_html=True)
-        
-        # Botón de logout alineado usando CSS absoluto
-        st.markdown("""
-        <style>
-            .user-info-flex {
-                position: relative;
-                padding-right: 40px; /* Espacio para el botón */
-            }
-            
-            /* Estilar el botón de Streamlit para que se vea como nuestro diseño */
-            div[data-testid="stSidebar"] button[data-testid="baseButton-secondary"] {
-                position: absolute !important;
-                top: 50% !important;
-                right: 8px !important;
-                transform: translateY(-50%) !important;
-                width: 32px !important;
-                height: 32px !important;
-                min-height: 32px !important;
-                background: transparent !important;
-                border: none !important;
-                border-radius: 50% !important;
-                color: #ff6b6b !important;
-                font-size: 16px !important;
-                padding: 0 !important;
-                transition: all 0.2s !important;
-                z-index: 10 !important;
-            }
-            
-            div[data-testid="stSidebar"] button[data-testid="baseButton-secondary"]:hover {
-                background: rgba(255, 107, 107, 0.1) !important;
-                color: #ee5a24 !important;
-            }
-        </style>
-        """, unsafe_allow_html=True)
-        
-        if st.button("🚪", key="logout_btn", help="Cerrar sesión"):
-            st.logout()
-        
 
-
-    else:
-        # Modo sin autenticación
-        st.markdown(f"""
-        <div class="user-info-flex">
-            <div class="user-avatar">{user_initials}</div>
-            <div style="display: flex; flex-direction: column; flex: 1;">
-                <div class="user-name">{user_name}</div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        st.markdown("""
-        <div class="auth-info">
-            Modo demo - Para autenticación multi-usuario configura OAuth2
-        </div>
-        """, unsafe_allow_html=True)
-
-st.sidebar.markdown("---")
-
-
-# EJEMPLO DE DASHBOARD DE MÉTRICAS (comentado)
-# st.sidebar.markdown("### 📊 Métricas del Sistema")
-# col1, col2 = st.sidebar.columns(2)
-# with col1:
-#     total_messages = len(st.session_state.chat_history)
-#     st.metric("💬 Mensajes", total_messages, delta=1 if total_messages > 0 else 0)
-# with col2:
-#     st.metric("🔧 Herramientas", 16, delta="+3")
-# st.sidebar.progress(0.85, "Funcionamiento: 85%")
-
-# Controles de memoria
-memoria_usuario = st.session_state.get("memoria_usuario", {})
-cantidad_alias = len(memoria_usuario)
-
-# Toggle para activar/desactivar contexto completo
-contexto_activo = st.sidebar.toggle(
-    "🧠 Usar contexto completo", 
-    value=st.session_state.usar_contexto_memoria,
-    help="Cuando está activo, el agente conoce tu nombre, email y alias automáticamente sin buscar en memoria."
-)
-st.session_state.usar_contexto_memoria = contexto_activo
-
-# El estado se muestra en el toggle, no necesitamos indicador adicional
-
-# Popover para ver la memoria (sin ícono del ojo)
-with st.sidebar.popover(f"Ver memoria ({cantidad_alias} alias)", use_container_width=True):
-    if memoria_usuario:
-        st.markdown("**🎯 Alias disponibles:**")
-        for alias, value in memoria_usuario.items():
-            st.markdown(f"• **{alias}** → `{value}`")
-        
-        st.markdown("---")
-        st.caption(f"Total: {cantidad_alias} alias precargados")
-        
-        if st.button("🔄 Recargar memoria", use_container_width=True):
-            if "memoria_usuario" in st.session_state:
-                del st.session_state["memoria_usuario"]
-            st.rerun()
-    else:
-        st.warning("No hay alias cargados")
-        st.markdown("Los alias se crean cuando:")
-        st.markdown("- El agente guarda información por ti")
-        st.markdown("- Usas la herramienta `save_memory`")
-
-# Sección de acciones - separada del área de memoria
-st.sidebar.markdown("---")
-col1, col2, col3 = st.sidebar.columns([1, 2, 1])
-with col2:
-    if st.button("Limpiar historial", use_container_width=True  ):
-        st.session_state.pydantic_ai_messages = []
-        st.session_state.streamlit_display_messages = []
-        st.session_state.chat_history = []
-        st.rerun()
-
-# El logout se maneja automáticamente a través del formulario HTML en la sección de usuario
-
-
-# --- CONFIGURACIÓN DE ATLASSIAN API KEY ---
-st.sidebar.markdown("---")
-st.sidebar.subheader("🔑 Configuración Atlassian") # Título generalizado
-
-# Este estado refleja si las credenciales están en la SESIÓN ACTUAL
-if st.session_state.get("atlassian_api_key") and st.session_state.get("atlassian_username"):
-    st.sidebar.success("Credenciales de Atlassian ✅")
-elif st.session_state.get("atlassian_api_key"):
-    st.sidebar.warning("Falta el nombre de usuario de Atlassian.")
-elif st.session_state.get("atlassian_username"):
-    st.sidebar.warning("Falta la API Key de Atlassian.")
-else:
-    st.sidebar.error("Credenciales de Atlassian NO configuradas.")
-
-with st.sidebar.popover("Gestionar Credenciales de Atlassian", use_container_width=True):
-    st.markdown("#### Tus Credenciales de Atlassian")
-    st.markdown(
-        """
-        Ingresa tu API key personal y tu nombre de usuario de Atlassian.
-        Se guardarán de forma persistente para futuras sesiones.
-        
-        **Importante:** El cifrado de la API Key es un *placeholder*. Implementa cifrado robusto.
-        El nombre de usuario se guarda como texto plano.
-        """
-    )
-
-    key_for_input = st.session_state.get("atlassian_api_key", "")
-    username_for_input = st.session_state.get("atlassian_username", "")
-    
-    new_api_key_input = st.text_input(
-        "Tu Atlassian API Key:",
-        type="password",
-        value=key_for_input,
-        placeholder="Pega tu API key aquí"
-    )
-    
-    new_username_input = st.text_input(
-        "Tu Nombre de Usuario Atlassian (email):",
-        value=username_for_input,
-        placeholder="ej: tu.email@dominio.com"
-    )
-
-    col_save, col_clear = st.columns(2)
-    with col_save:
-        if st.button("💾 Guardar Credenciales", use_container_width=True, type="primary"):
-            if new_api_key_input and new_username_input:
-                save_atlassian_credentials_for_user(current_user, new_api_key_input, new_username_input)
-                st.session_state.atlassian_api_key = new_api_key_input
-                st.session_state.atlassian_username = new_username_input
-                st.success("¡Credenciales guardadas!")
-                logfire.info(f"Credenciales de Atlassian guardadas/actualizadas por {current_user}")
+    with col2:
+        if is_logged_in:
+            if st.button("🚪", key="logout_btn", help="Cerrar sesión"):
+                user_email = st.session_state.get('local_user_email', 'usuario_local')
+                _clear_local_user_session()
+                log_user_action("logout_success", 
+                               auth_method="local_auth",
+                               user_email=user_email)
+                
+                # Limpiar chat al cerrar sesión
+                keys_to_clear = ['auth_method', 'user_authenticated', 'user_email', 'display_name', 
+                               'chat_history', 'pydantic_ai_messages', 'streamlit_display_messages']
+                for key in keys_to_clear:
+                    if key in st.session_state:
+                        del st.session_state[key]
+                
                 st.rerun()
-            else:
-                st.warning("Ingresa API Key y Nombre de Usuario.")
     
-    with col_clear:
-        if st.button("🗑️ Borrar Guardadas", use_container_width=True):
-            save_atlassian_credentials_for_user(current_user, "", "") # Guardar vacío borra
-            st.session_state.atlassian_api_key = ""
-            st.session_state.atlassian_username = ""
-            st.info("Credenciales eliminadas de persistencia.")
-            logfire.info(f"Credenciales de Atlassian eliminadas por {current_user}")
+    # ===== SECCIÓN ADMIN =====
+    user_is_admin = _check_if_current_user_is_admin()
+    if user_is_admin:
+        st.markdown('<div style="height: 1px; background: rgba(255, 255, 255, 0.1); margin: 16px 0;"></div>', unsafe_allow_html=True)
+        if st.button("🛠️ Panel de Admin", 
+                            use_container_width=True, 
+                            type="primary",
+                            key="admin_panel_access"):
+            st.session_state.auth_method = "admin_panel"
             st.rerun()
 
-    st.markdown("---")
-    # Verifica directamente de persistencia para el mensaje
-    _, stored_username = get_atlassian_credentials_for_user(current_user) 
-    if stored_username: # Si hay username, asumimos que hay (o hubo) key
-        st.caption("ℹ️ Ya tienes credenciales guardadas. Ingresar nuevas las reemplazará.")
+    # ===== SECCIÓN MEMORIA & CONTEXTO =====
+    st.markdown('<div style="height: 1px; background: rgba(255, 255, 255, 0.1); margin: 16px 0;"></div>', unsafe_allow_html=True)
+    memoria_usuario = st.session_state.get("memoria_usuario", {})
+    cantidad_alias = len(memoria_usuario)
+    
+    # Toggle para contexto
+    contexto_activo = st.toggle(
+        "Usar contexto completo", 
+        value=st.session_state.usar_contexto_memoria,
+        help="Incluye automáticamente tu información personal y alias en las consultas"
+    )
+    st.session_state.usar_contexto_memoria = contexto_activo
+
+    # Controles de memoria
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        with st.popover(f"📚 Memoria ({cantidad_alias})", use_container_width=True):
+            if memoria_usuario:
+                st.markdown("**Alias guardados:**")
+                for alias, value in memoria_usuario.items():
+                    st.markdown(f"• **{alias}** → `{value}`")
+                
+                if st.button("🔄 Recargar memoria", use_container_width=True):
+                    if "memoria_usuario" in st.session_state:
+                        del st.session_state["memoria_usuario"]
+                    st.rerun()
+            else:
+                st.info("No hay alias guardados")
+                st.markdown("Los alias se crean automáticamente cuando el agente guarda información")
+
+    with col2:
+        if st.button("🗑️", key="clear_chat", help="Limpiar historial de chat"):
+            st.session_state.pydantic_ai_messages = []
+            st.session_state.streamlit_display_messages = []
+            st.session_state.chat_history = []
+            st.rerun()
+
+    # ===== SECCIÓN ATLASSIAN =====
+    st.markdown('<div style="height: 1px; background: rgba(255, 255, 255, 0.1); margin: 16px 0;"></div>', unsafe_allow_html=True)
+    # Estado de credenciales
+    if st.session_state.get("atlassian_api_key") and st.session_state.get("atlassian_username"):
+        st.success("✅ Configurado")
+    elif st.session_state.get("atlassian_api_key"):
+        st.error("❌ Falta usuario")
+    elif st.session_state.get("atlassian_username"):
+        st.error("❌ Falta API Key")
     else:
-        st.caption("ℹ️ Aún no has guardado credenciales.")
+        st.error("❌ No configurado")
 
+    with st.popover("⚙️ Configurar credenciales", use_container_width=True):
+        st.markdown("**Credenciales de Atlassian**")
+        st.markdown("Se guardan para futuras sesiones.")
 
-# Información del sistema al final absoluto del sidebar
-with st.sidebar:
+        key_for_input = st.session_state.get("atlassian_api_key", "")
+        username_for_input = st.session_state.get("atlassian_username", "")
+        
+        new_api_key_input = st.text_input(
+            "API Key:",
+            type="password",
+            value=key_for_input,
+            placeholder="Tu API key"
+        )
+        
+        new_username_input = st.text_input(
+            "Email:",
+            value=username_for_input,
+            placeholder="tu@dominio.com"
+        )
+
+        col_save, col_clear = st.columns(2)
+        with col_save:
+            if st.button("💾 Guardar", use_container_width=True, type="primary"):
+                if new_api_key_input and new_username_input:
+                    save_atlassian_credentials_for_user(current_user, new_api_key_input, new_username_input)
+                    st.session_state.atlassian_api_key = new_api_key_input
+                    st.session_state.atlassian_username = new_username_input
+                    st.success("¡Credenciales guardadas!")
+                    logfire.info(f"Credenciales de Atlassian guardadas/actualizadas por {current_user}")
+                    st.rerun()
+                else:
+                    st.warning("Ingresa API Key y Nombre de Usuario.")
+        
+        with col_clear:
+            if st.button("🗑️ Limpiar", use_container_width=True):
+                save_atlassian_credentials_for_user(current_user, "", "") # Guardar vacío borra
+                st.session_state.atlassian_api_key = ""
+                st.session_state.atlassian_username = ""
+                st.info("Credenciales eliminadas de persistencia.")
+                logfire.info(f"Credenciales de Atlassian eliminadas por {current_user}")
+                st.rerun()
+
+        st.markdown("---")
+        # Verifica directamente de persistencia para el mensaje
+        _, stored_username = get_atlassian_credentials_for_user(current_user) 
+        if stored_username: # Si hay username, asumimos que hay (o hubo) key
+            st.caption("ℹ️ Ya tienes credenciales guardadas. Ingresar nuevas las reemplazará.")
+        else:
+            st.caption("ℹ️ Aún no has guardado credenciales.")
+
+    # Información del sistema al final
     st.markdown("---")
     st.markdown(f"""
     <div style="
@@ -1203,9 +2196,7 @@ with st.sidebar:
         font-family: inherit;
     ">
         {settings.PYDANTIC_AI_MODEL}<br>
-        <span style="font-size: 10px !important;">v0.1.0 beta</span>
+        <span style="font-size: 10px !important;">v0.1.0 beta</span><br>
+        <span style="font-size: 10px !important;">{fecha_actual}</span>
     </div>
     """, unsafe_allow_html=True)
-
-
-st.sidebar.markdown("---")
