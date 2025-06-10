@@ -1,4 +1,4 @@
-# 👑 Manual del Administrador - Sistema de Autenticación Híbrido
+Mejor# 👑 Manual del Administrador - Sistema de Autenticación Híbrido
 
 ## 📋 Descripción del Rol
 

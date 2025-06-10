@@ -10,6 +10,8 @@ from config.encryption import credential_encryption
 from config.logging_context import (
     UserLoggingContext, logger, log_user_action, log_system_event, log_operation
 )
+# Servicio de autenticación centralizado
+from config.auth_service import AuthService
 from ui.agent_wrapper import simple_agent # Importamos nuestro agente simplificado
 from pydantic_ai.messages import UserPromptPart, TextPart, ModelMessage # Para el historial
 from typing import List, Dict
@@ -945,8 +947,6 @@ if not check_authentication():
     st.stop()  # Detener ejecución si no está autenticado
 
 # Usuario autenticado - continuar con la aplicación
-# Usar el servicio centralizado de autenticación
-from config.auth_service import AuthService
 
 # ===== DETECCIÓN DE CAMBIO DE USUARIO - LIMPIAR CHAT =====
 # Manejar cambios de usuario automáticamente
