@@ -11,29 +11,45 @@ DEFAULT_USER_ID = "atlassian_agent_user_001"
 
 def get_current_user_id() -> str:
     """
-    Obtiene el ID del usuario actual desde Streamlit session state.
-    Si no hay usuario autenticado, usa el ID por defecto.
+    Obtiene el ID del usuario actual utilizando el AuthService centralizado.
+    Esto asegura consistencia en la identificación del usuario en toda la app.
     """
-    import streamlit as st
-    
-    # Prioridad 1: Usuario autenticado con Streamlit native auth (verificación segura)
     try:
-        if hasattr(st, 'user') and hasattr(st.user, 'is_logged_in') and st.user.is_logged_in:
-            return getattr(st.user, 'email', DEFAULT_USER_ID)
-    except (AttributeError, KeyError):
-        # La autenticación nativa no está disponible o configurada
-        pass
-    
-    # Prioridad 2: Usuario en session_state (para otros sistemas de auth)
-    if 'user_email' in st.session_state:
-        return st.session_state.user_email
-    
-    # Prioridad 3: Username en session_state (compatibilidad)
-    if 'username' in st.session_state:
-        return st.session_state.username
-    
-    # Fallback: Usuario por defecto
-    return DEFAULT_USER_ID
+        # Usar el servicio centralizado de autenticación
+        from config.auth_service import AuthService
+        user_id = AuthService.get_user_id()
+        
+        logfire.debug(f"get_current_user_id: {user_id}")
+        return user_id
+        
+    except ImportError as e:
+        logfire.error(f"Error importando AuthService: {e}")
+        # Fallback al método anterior si hay problemas de importación
+        import streamlit as st
+        
+        # Prioridad 1: Usuario local autenticado
+        if st.session_state.get('local_user_authenticated', False):
+            return st.session_state.get('local_user_email', DEFAULT_USER_ID)
+        
+        # Prioridad 2: Usuario OAuth2
+        try:
+            if hasattr(st, 'user') and hasattr(st.user, 'is_logged_in') and st.user.is_logged_in:
+                return getattr(st.user, 'email', DEFAULT_USER_ID)
+        except (AttributeError, KeyError):
+            pass
+        
+        # Prioridad 3: Compatibilidad con session_state anterior
+        if 'user_email' in st.session_state:
+            return st.session_state.user_email
+        if 'username' in st.session_state:
+            return st.session_state.username
+        
+        # Fallback: Usuario por defecto
+        return DEFAULT_USER_ID
+        
+    except Exception as e:
+        logfire.error(f"Error inesperado obteniendo user_id: {e}", exc_info=True)
+        return DEFAULT_USER_ID
 
 # Configuración: obtener la API key de Mem0 desde el entorno
 MEM0_API_KEY = os.getenv("MEM0_API_KEY")
@@ -322,40 +338,200 @@ if __name__ == "__main__":
 
     asyncio.run(main())
 
+def invalidate_user_memory_cache(old_user_id: str, new_user_id: str):
+    """
+    Invalida y limpia el cache de memoria para un cambio de usuario.
+    Esto es crítico para la seguridad multiusuario con mem0.
+    """
+    try:
+        import streamlit as st
+        
+        logfire.info(f"Invalidating memory cache: {old_user_id} -> {new_user_id}")
+        
+        # Limpiar memoria cacheada en session_state
+        if 'memoria_usuario' in st.session_state:
+            del st.session_state['memoria_usuario']
+            logfire.info("Session state memory cache cleared")
+        
+        # Log de seguridad (si logfire.security no existe, usar logfire.info)
+        try:
+            logfire.security("user_memory_invalidated",
+                            old_user=old_user_id,
+                            new_user=new_user_id,
+                            action="memory_cache_cleared")
+        except AttributeError:
+            # Fallback si logfire.security no existe
+            logfire.info("user_memory_invalidated",
+                        old_user=old_user_id,
+                        new_user=new_user_id,
+                        action="memory_cache_cleared",
+                        level="SECURITY")
+                        
+    except Exception as e:
+        logfire.error(f"Error invalidating memory cache: {e}", 
+                     old_user=old_user_id, new_user=new_user_id, exc_info=True)
+
 async def precargar_memoria_completa_usuario(limit: int = 100) -> SearchMemoryResponse:
     """
     Función específica para precargar toda la memoria del usuario al iniciar la app.
-    Usa una búsqueda genérica para traer todos los alias guardados.
+    Usa mem0_client.get_all() para obtener todas las memorias del usuario.
     """
     if not mem0_client:
         logfire.warn("precargar_memoria_completa_usuario called but mem0_client is not initialized.")
         return SearchMemoryResponse(results=[], status="Mem0 client not initialized.")
     
     try:
-        # Usar una búsqueda genérica que probablemente coincida con muchas memorias
-        # Intentamos con diferentes queries hasta que uno funcione
-        queries_to_try = [
-            "alias",  # Buscar por la palabra "alias" que debería estar en muchas memorias
-            "proyecto",  # Otra palabra común
-            " ",  # Espacio simple
-            "",   # String vacío (si Mem0 lo permite)
+        current_user_id = get_current_user_id()
+        logfire.info(f"Precargando memoria para usuario: {current_user_id}")
+        
+        # Usar get_all() para obtener todas las memorias del usuario
+        # Esto es mucho más eficiente que hacer búsquedas semánticas genéricas
+        result = mem0_client.get_all(user_id=current_user_id, limit=limit)
+        logfire.info(f"precargar_memoria_completa_usuario - get_all result type: {type(result)}")
+        logfire.info(f"precargar_memoria_completa_usuario - get_all result content: {result}")
+        
+        parsed_results_list = []
+        
+        # Procesar el resultado de get_all()
+        # El formato puede variar entre versiones de la API
+        actual_mem_list = []
+        if isinstance(result, list):
+            actual_mem_list = result
+        elif isinstance(result, dict):
+            # Buscar las memorias en diferentes formatos posibles
+            if "results" in result and isinstance(result["results"], list):
+                actual_mem_list = result["results"]
+            elif "memories" in result and isinstance(result["memories"], list):
+                actual_mem_list = result["memories"]
+            elif "data" in result and isinstance(result["data"], list):
+                actual_mem_list = result["data"]
+            else:
+                # Si es un dict pero no tiene la estructura esperada, intentar procesar directamente
+                if "memory" in result or "id" in result:
+                    actual_mem_list = [result]
+
+        logfire.info(f"Procesando {len(actual_mem_list)} memorias")
+
+        for i, mem_item in enumerate(actual_mem_list):
+            logfire.debug(f"Procesando memoria {i+1}: {mem_item}")
+            
+            if not isinstance(mem_item, dict): 
+                logfire.debug(f"Memoria {i+1} no es dict, tipo: {type(mem_item)}")
+                continue
+                
+            # Obtener metadata - puede estar en diferentes lugares según la versión de la API
+            meta = mem_item.get("metadata", {})
+            if not isinstance(meta, dict): 
+                meta = {}
+            
+            logfire.debug(f"Memoria {i+1} metadata: {meta}")
+            
+            # Buscar alias y value en metadata
+            alias_val = meta.get("alias")
+            value_val = meta.get("value")
+            
+            logfire.debug(f"Memoria {i+1} - alias: {alias_val}, value: {value_val}")
+
+            # Solo procesar memorias que tienen alias y value en metadata
+            if alias_val and value_val:
+                parsed_results_list.append(MemoryResult(
+                    memory_id=str(mem_item.get("id", "")),
+                    alias=str(alias_val),
+                    value=str(value_val),
+                    type=str(meta.get("type")) if meta.get("type") is not None else None,
+                    context=str(meta.get("context")) if meta.get("context") is not None else None,
+                    extra={k: v for k, v in meta.items() if k not in {"alias", "value", "type", "context"}}
+                ))
+            else:
+                # Log para memorias que no tienen la estructura esperada
+                memory_content = mem_item.get("memory", "")
+                logfire.debug(f"Memoria {i+1} sin alias/value - contenido: {memory_content}, metadata completa: {meta}")
+                
+                # Intentar extraer información si la memoria está en formato texto
+                # Por ejemplo: "User name is Manuel" podría convertirse en alias="nombre", value="Manuel"
+                if memory_content and isinstance(memory_content, str):
+                    # Patterns comunes que podríamos reconocer
+                    if "name is" in memory_content.lower():
+                        # "User name is Manuel" -> alias="nombre", value="Manuel"
+                        parts = memory_content.lower().split("name is")
+                        if len(parts) >= 2:
+                            name_value = parts[1].strip().title()
+                            parsed_results_list.append(MemoryResult(
+                                memory_id=str(mem_item.get("id", "")),
+                                alias="nombre",
+                                value=name_value,
+                                type="personal_details",
+                                context=f"Extraído automáticamente de: {memory_content}",
+                                extra={"original_memory": memory_content, "auto_extracted": True}
+                            ))
+                            logfire.info(f"Memoria convertida automáticamente: {memory_content} -> nombre={name_value}")
+                    # Agregar más patterns según sea necesario
+                    elif "se llama" in memory_content.lower():
+                        # "El usuario se llama Juan" -> alias="nombre", value="Juan"
+                        parts = memory_content.lower().split("se llama")
+                        if len(parts) >= 2:
+                            name_value = parts[1].strip().title()
+                            parsed_results_list.append(MemoryResult(
+                                memory_id=str(mem_item.get("id", "")),
+                                alias="nombre",
+                                value=name_value,
+                                type="personal_details",
+                                context=f"Extraído automáticamente de: {memory_content}",
+                                extra={"original_memory": memory_content, "auto_extracted": True}
+                            ))
+                            logfire.info(f"Memoria convertida automáticamente: {memory_content} -> nombre={name_value}")
+        
+        logfire.info(f"precargar_memoria_completa_usuario: Cargados {len(parsed_results_list)} alias válidos para el usuario.")
+        
+        # Si no encontramos ningún alias válido, usar fallback de búsqueda
+        if len(parsed_results_list) == 0:
+            logfire.info("No se encontraron alias en metadata, intentando con búsqueda semántica como fallback")
+            return await _precargar_memoria_fallback_search(current_user_id, limit)
+        
+        return SearchMemoryResponse(results=parsed_results_list, status="ok")
+        
+    except Exception as e:
+        logfire.error(f"Error durante precargar_memoria_completa_usuario: {e}", exc_info=True)
+        
+        # Fallback a búsqueda semántica si get_all() falla
+        try:
+            current_user_id = get_current_user_id()
+            logfire.info("Intentando fallback con búsqueda semántica")
+            return await _precargar_memoria_fallback_search(current_user_id, limit)
+        except Exception as fallback_error:
+            logfire.error(f"Error en fallback de búsqueda: {fallback_error}", exc_info=True)
+            return SearchMemoryResponse(results=[], status=f"Error cargando memoria: {str(e)}")
+
+async def _precargar_memoria_fallback_search(user_id: str, limit: int = 100) -> SearchMemoryResponse:
+    """
+    Función de fallback para precargar memoria usando búsqueda semántica.
+    Se usa cuando get_all() no funciona o no retorna resultados útiles.
+    """
+    try:
+        # Intentar diferentes estrategias de búsqueda
+        search_strategies = [
+            ("nombre", "Buscar memorias con información de nombres"),
+            ("alias", "Buscar memorias con alias"),
+            ("proyecto", "Buscar memorias de proyectos"),
+            ("usuario", "Buscar memorias de usuario"),
+            ("manual", "Buscar memorias específicas como el nombre Manuel"),
+            (" ", "Búsqueda con espacio"),
         ]
         
-        for query_attempt in queries_to_try:
+        for query, description in search_strategies:
             try:
-                current_user_id = get_current_user_id()
-                logfire.debug(f"Preloading memory for user: {current_user_id}")
+                logfire.debug(f"Intentando búsqueda fallback: {description}")
                 
                 result = mem0_client.search(
-                    query=query_attempt, 
-                    user_id=current_user_id, 
+                    query=query, 
+                    user_id=user_id, 
                     filters={}, 
                     limit=limit
                 )
-                logfire.debug(f"precargar_memoria_completa_usuario with query '{query_attempt}' - raw result: {result}")
                 
                 parsed_results_list = []
                 actual_mem_list = []
+                
                 if isinstance(result, list):
                     actual_mem_list = result
                 elif isinstance(result, dict) and "results" in result and isinstance(result["results"], list):
@@ -373,7 +549,6 @@ async def precargar_memoria_completa_usuario(limit: int = 100) -> SearchMemoryRe
                     alias_val = meta.get("alias")
                     value_val = meta.get("value")
 
-                    # Only proceed if both alias and value are present and not empty
                     if alias_val and value_val:
                         parsed_results_list.append(MemoryResult(
                             memory_id=str(mem_item.get("id", "")),
@@ -384,17 +559,18 @@ async def precargar_memoria_completa_usuario(limit: int = 100) -> SearchMemoryRe
                             extra={k: v for k, v in meta.items() if k not in {"alias", "value", "type", "context"}}
                         ))
                 
-                logfire.info(f"precargar_memoria_completa_usuario: Cargados {len(parsed_results_list)} alias válidos para el usuario.")
-                return SearchMemoryResponse(results=parsed_results_list, status="ok")
+                if len(parsed_results_list) > 0:
+                    logfire.info(f"Búsqueda fallback exitosa con '{query}': {len(parsed_results_list)} resultados")
+                    return SearchMemoryResponse(results=parsed_results_list, status="ok")
                 
-            except Exception as query_error:
-                logfire.debug(f"Query '{query_attempt}' failed: {query_error}")
+            except Exception as strategy_error:
+                logfire.debug(f"Estrategia de búsqueda '{query}' falló: {strategy_error}")
                 continue
         
-        # Si todos los queries fallaron
-        logfire.warn("precargar_memoria_completa_usuario: Todos los queries genéricos fallaron. Retornando memoria vacía.")
-        return SearchMemoryResponse(results=[], status="No se pudo cargar la memoria - todos los queries fallaron")
+        # Si todas las estrategias fallaron
+        logfire.warn("Todas las estrategias de búsqueda fallback fallaron")
+        return SearchMemoryResponse(results=[], status="No se encontraron memorias - todas las estrategias fallaron")
         
     except Exception as e:
-        logfire.error(f"Error during precargar_memoria_completa_usuario: {e}", exc_info=True)
-        return SearchMemoryResponse(results=[], status=f"Error cargando memoria: {str(e)}") 
+        logfire.error(f"Error en _precargar_memoria_fallback_search: {e}", exc_info=True)
+        return SearchMemoryResponse(results=[], status=f"Error en búsqueda fallback: {str(e)}") 

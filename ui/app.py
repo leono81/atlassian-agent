@@ -300,33 +300,9 @@ def _clear_local_user_session():
         from config.user_credentials_db import user_credentials_db
         user_credentials_db.invalidate_user_session(st.session_state.local_user_session_id)
     
-    # Limpiar TODO el session_state relacionado con el usuario para evitar fugas de datos entre sesiones.
+    # Usar el servicio centralizado para limpiar la sesión
     # Esto es CRÍTICO para la seguridad.
-    keys_to_clear = [
-        # Autenticación y sesión
-        'auth_method',
-        'local_user_authenticated',
-        'local_user_email',
-        'local_user_display_name',
-        'local_user_is_admin',
-        'local_user_session_id',
-        'user_authenticated', 
-        'user_email', 
-        'display_name',
-        
-        # Datos de la aplicación
-        'chat_history',
-        'pydantic_ai_messages',
-        'streamlit_display_messages',
-        'memoria_usuario',
-        
-        # Credenciales sensibles
-        'atlassian_api_key',
-        'atlassian_username'
-    ]
-    for key in keys_to_clear:
-        if key in st.session_state:
-            del st.session_state[key]
+    AuthService.clear_user_session()
     
     logger.info("local_user_session_cleared_completely")
 
@@ -491,19 +467,8 @@ def handle_local_auth():
 
 def _validate_admin_access():
     """Verifica si el usuario actual tiene permisos de administrador."""
-    # Si es usuario local, verificar si es admin
-    if st.session_state.get('local_user_authenticated', False):
-        return st.session_state.get('local_user_is_admin', False)
-    
-    # Para usuarios OAuth2, por ahora permitir acceso (se puede restringir después)
-    try:
-        if hasattr(st, 'user') and hasattr(st.user, 'is_logged_in') and st.user.is_logged_in:
-            return True  # Todos los usuarios OAuth2 son admin por defecto
-    except (AttributeError, KeyError):
-        pass
-    
-    # Para usuario demo, no permitir acceso a admin
-    return False
+    # Usar el servicio centralizado
+    return AuthService.is_user_admin()
 
 def _create_user_tab():
     """Tab para crear nuevos usuarios."""
@@ -980,50 +945,24 @@ if not check_authentication():
     st.stop()  # Detener ejecución si no está autenticado
 
 # Usuario autenticado - continuar con la aplicación
-def get_user_info():
-    """Obtiene información del usuario de forma segura."""
-    # Prioridad 1: Usuario local autenticado
-    if st.session_state.get('local_user_authenticated', False):
-        email = st.session_state.get('local_user_email', 'usuario_local')
-        name = st.session_state.get('local_user_display_name', email)
-        return email, name
-    
-    # Prioridad 2: Usuario OAuth2 (Google)
-    try:
-        if hasattr(st, 'user') and hasattr(st.user, 'is_logged_in') and st.user.is_logged_in:
-            email = getattr(st.user, 'email', 'usuario_autenticado')
-            name = getattr(st.user, 'name', email)
-            return email, name
-    except (AttributeError, KeyError):
-        pass
-    
-    # Fallback para modo sin autenticación
-    return "atlassian_agent_user_001", "Usuario Demo"
-
-current_user, user_name = get_user_info()
+# Usar el servicio centralizado de autenticación
+from config.auth_service import AuthService
 
 # ===== DETECCIÓN DE CAMBIO DE USUARIO - LIMPIAR CHAT =====
-# Verificar si cambió el usuario para limpiar el chat
-last_user = st.session_state.get('last_logged_user', None)
-if last_user and last_user != current_user:
-    # Usuario diferente detectado - limpiar chat y contexto
-    chat_keys_to_clear = [
-        'chat_history', 
-        'pydantic_ai_messages', 
-        'streamlit_display_messages',
-        'memoria_usuario'  # También limpiar memoria para nuevo usuario
-    ]
-    for key in chat_keys_to_clear:
-        if key in st.session_state:
-            del st.session_state[key]
-    
+# Manejar cambios de usuario automáticamente
+user_changed = AuthService.handle_user_change()
+
+if user_changed:
     # Log del cambio de usuario
+    current_user_id = AuthService.get_user_id()
+    last_user = st.session_state.get('last_logged_user_previous', 'unknown')
+    
     log_user_action("user_switched", 
                    previous_user=last_user,
-                   new_user=current_user)
+                   new_user=current_user_id)
 
-# Actualizar el último usuario logueado
-st.session_state['last_logged_user'] = current_user
+# Obtener información del usuario actual
+current_user, user_name = AuthService.get_user_display_info()
 
 # Log del inicio de sesión de usuario
 log_user_action("session_loaded", 
@@ -1335,6 +1274,10 @@ def precargar_memoria_usuario():
     """Precarga la memoria del usuario desde Mem0 al iniciar la app."""
     if "memoria_usuario" not in st.session_state:
         try:
+            # Obtener el usuario actual para logging
+            current_user_id = AuthService.get_user_id()
+            logfire.info(f"Precargando memoria para usuario: {current_user_id}")
+            
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             result = loop.run_until_complete(precargar_memoria_completa_usuario(limit=100))
@@ -1345,9 +1288,9 @@ def precargar_memoria_usuario():
                 for mem in result.results:
                     if mem.alias and mem.value:
                         memoria[mem.alias] = mem.value
-                logfire.info(f"Memoria precargada exitosamente: {len(memoria)} alias cargados.")
+                logfire.info(f"Memoria precargada exitosamente para {current_user_id}: {len(memoria)} alias cargados.")
             else:
-                logfire.warn(f"No se pudo precargar la memoria: {result.status if result else 'resultado nulo'}")
+                logfire.warn(f"No se pudo precargar la memoria para {current_user_id}: {result.status if result else 'resultado nulo'}")
             
             st.session_state["memoria_usuario"] = memoria
             
@@ -1449,18 +1392,8 @@ if "atlassian_api_key" not in st.session_state or "atlassian_username" not in st
 # Mostrar botón de Panel de Admin si el usuario es administrador
 def _check_if_current_user_is_admin():
     """Verifica si el usuario actual tiene permisos de administrador."""
-    # Usuario local autenticado
-    if st.session_state.get('local_user_authenticated', False):
-        return st.session_state.get('local_user_is_admin', False)
-    
-    # Usuario OAuth2 - por ahora todos son admin por defecto
-    try:
-        if hasattr(st, 'user') and hasattr(st.user, 'is_logged_in') and st.user.is_logged_in:
-            return True  # Todos los usuarios OAuth2 son admin por defecto
-    except (AttributeError, KeyError):
-        pass
-    
-    return False
+    # Usar el servicio centralizado
+    return AuthService.is_user_admin()
 
 # ===== ÁREA PRINCIPAL DEL CHAT =====
 
@@ -2077,10 +2010,14 @@ with st.sidebar:
         if is_logged_in:
             if st.button("🚪", key="logout_btn", help="Cerrar sesión"):
                 user_email = st.session_state.get('local_user_email', 'usuario_local')
-                _clear_local_user_session()
+                
+                # Log antes de limpiar
                 log_user_action("logout_success", 
                                auth_method="local_auth",
                                user_email=user_email)
+                
+                # Limpiar sesión usando el método centralizado
+                _clear_local_user_session()
                 
                 # Simplemente recargamos la app, el estado de sesión ya está limpio.
                 st.rerun()
