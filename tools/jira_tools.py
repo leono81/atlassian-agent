@@ -217,18 +217,28 @@ async def search_issues(
                          jql=jql_query, 
                          limit=actual_max_results,
                          username=atlassian_username):
-            issues_data = await loop.run_in_executor(None, 
-                lambda: jira.search_issues(jql_query, maxResults=actual_max_results, fields="summary,status,assignee,reporter,duedate"))
+            # Usar jira.jql() que es el método correcto para atlassian-python-api
+            jql_response = await loop.run_in_executor(None, 
+                lambda: jira.jql(jql_query, fields=["summary", "status", "assignee", "reporter", "duedate"], limit=actual_max_results))
+        
+        # Extraer la lista de issues de la respuesta JQL
+        issues_data = jql_response.get("issues", []) if isinstance(jql_response, dict) else []
         
         results = []
         for issue in issues_data:
+            # Procesar cada issue - la estructura puede ser diferente en jql()
+            fields = issue.get("fields", {})
+            status_info = fields.get("status", {})
+            assignee_info = fields.get("assignee")
+            reporter_info = fields.get("reporter")
+            
             results.append(JiraIssue(
-                key=issue.key,
-                summary=issue.fields.summary,
-                status=issue.fields.status.name if issue.fields.status else None,
-                assignee=issue.fields.assignee.displayName if issue.fields.assignee else None,
-                reporter=issue.fields.reporter.displayName if issue.fields.reporter else None,
-                duedate=str(issue.fields.duedate) if issue.fields.duedate else None
+                key=issue.get("key"),
+                summary=fields.get("summary"),
+                status=status_info.get("name") if status_info else None,
+                assignee=assignee_info.get("displayName") if assignee_info else None,
+                reporter=reporter_info.get("displayName") if reporter_info else None,
+                duedate=str(fields.get("duedate")) if fields.get("duedate") else None
             ))
         
         # Log del resultado exitoso
