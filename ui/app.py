@@ -68,6 +68,26 @@ st.markdown("""
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 """, unsafe_allow_html=True)
 
+# CSS para ocultar elementos de la interfaz (Deploy button, etc.)
+st.markdown("""
+<style>
+/* Ocultar botón Deploy (versión 1.38+) */
+.stAppDeployButton {
+    visibility: hidden;
+}
+
+/* Opcional: También ocultar menú principal si lo deseas */
+#MainMenu {
+    visibility: hidden;
+}
+
+/* Opcional: Ocultar footer de Streamlit */
+footer {
+    visibility: hidden;
+}
+</style>
+""", unsafe_allow_html=True)
+
 # --- CONSTANTES PARA API KEYS DE ATLASSIAN POR USUARIO ---
 USER_KEYS_DIR = Path(".streamlit")
 USER_KEYS_FILE = USER_KEYS_DIR / "user_atlassian_keys.json"
@@ -1271,32 +1291,31 @@ st.markdown("""
 
 # --- FUNCIONES UTILITARIAS ---
 def precargar_memoria_usuario():
-    """Precarga la memoria del usuario desde Mem0 al iniciar la app."""
-    if "memoria_usuario" not in st.session_state:
-        try:
-            # Obtener el usuario actual para logging
-            current_user_id = AuthService.get_user_id()
-            logfire.info(f"Precargando memoria para usuario: {current_user_id}")
-            
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            result = loop.run_until_complete(precargar_memoria_completa_usuario(limit=100))
-            loop.close()
-            
-            memoria = {}
-            if result and hasattr(result, "results") and result.status == "ok":
-                for mem in result.results:
-                    if mem.alias and mem.value:
-                        memoria[mem.alias] = mem.value
-                logfire.info(f"Memoria precargada exitosamente para {current_user_id}: {len(memoria)} alias cargados.")
-            else:
-                logfire.warn(f"No se pudo precargar la memoria para {current_user_id}: {result.status if result else 'resultado nulo'}")
-            
-            st.session_state["memoria_usuario"] = memoria
-            
-        except Exception as e:
-            logfire.error(f"Error durante la precarga de memoria: {e}", exc_info=True)
-            st.session_state["memoria_usuario"] = {}
+    """Precarga la memoria del usuario desde Mem0 al iniciar la app o cuando se fuerza la recarga."""
+    try:
+        # Obtener el usuario actual para logging
+        current_user_id = AuthService.get_user_id()
+        logfire.info(f"Precargando memoria para usuario: {current_user_id}")
+        
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        result = loop.run_until_complete(precargar_memoria_completa_usuario(limit=100))
+        loop.close()
+        
+        memoria = {}
+        if result and hasattr(result, "results") and result.status == "ok":
+            for mem in result.results:
+                if mem.alias and mem.value:
+                    memoria[mem.alias] = mem.value
+            logfire.info(f"Memoria precargada exitosamente para {current_user_id}: {len(memoria)} alias cargados.")
+        else:
+            logfire.warn(f"No se pudo precargar la memoria para {current_user_id}: {result.status if result else 'resultado nulo'}")
+        
+        st.session_state["memoria_usuario"] = memoria
+        
+    except Exception as e:
+        logfire.error(f"Error durante la precarga de memoria: {e}", exc_info=True)
+        st.session_state["memoria_usuario"] = {}
 
 def resolver_alias(alias):
     """Resuelve un alias desde la memoria precargada."""
@@ -1304,7 +1323,7 @@ def resolver_alias(alias):
     return memoria.get(alias)
 
 def guardar_nuevo_alias(alias, value):
-    """Guarda un nuevo alias tanto en sesión como en Mem0."""
+    """Guarda un nuevo alias tanto en sesión como en Mem0, y fuerza recarga de memoria."""
     if "memoria_usuario" not in st.session_state:
         st.session_state["memoria_usuario"] = {}
     st.session_state["memoria_usuario"][alias] = value
@@ -1313,6 +1332,12 @@ def guardar_nuevo_alias(alias, value):
     asyncio.set_event_loop(loop)
     loop.run_until_complete(save_memory(alias=alias, value=value))
     loop.close()
+    
+    # 🔄 AUTO-RECARGA: Forzar recarga de memoria después de guardar
+    logfire.info(f"Auto-recargando memoria después de guardar alias: {alias}")
+    if "memoria_usuario" in st.session_state:
+        del st.session_state["memoria_usuario"]
+    precargar_memoria_usuario()  # Recargar inmediatamente
 
 def generar_contexto_completo():
     """Genera un string con información del usuario y memoria para pasarla como contexto al agente."""
@@ -1354,8 +1379,9 @@ if "streamlit_display_messages" not in st.session_state:
 if "usar_contexto_memoria" not in st.session_state:
     st.session_state.usar_contexto_memoria = True
 
-# Ejecutar precarga de memoria una sola vez
-precargar_memoria_usuario()
+# Ejecutar precarga de memoria una sola vez al inicializar
+if "memoria_usuario" not in st.session_state:
+    precargar_memoria_usuario()
 
 # --- INICIALIZACIÓN DE CREDENCIALES DE ATLASSIAN EN SESSION STATE ---
 if "atlassian_api_key" not in st.session_state or "atlassian_username" not in st.session_state:
@@ -1422,16 +1448,17 @@ st.markdown("""
 <style>
     /* ===== ESTILOS PARA ÁREA PRINCIPAL (MÉTODOS ROBUSTOS) ===== */
     
-    /* Título principal elegante - MÉTODO DIRECTO SIN VARIABLES CSS */
+    /* Título principal compacto - MÉTODO DIRECTO SIN VARIABLES CSS */
     .main-title {
         text-align: center;
         background: linear-gradient(135deg, #4a9eff, #00d084);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
         background-clip: text;
-        font-size: 2.5rem;
-        font-weight: 700;
-        margin-bottom: 2rem;
+        font-size: 2rem;
+        font-weight: 600;
+        margin-bottom: 1rem;
+        margin-top: 0.5rem;
         text-shadow: 0 2px 4px rgba(0,0,0,0.1);
     }
     
@@ -1473,41 +1500,65 @@ st.markdown("""
         box-shadow: none !important;
     }
     
-    /* Mensajes de chat minimalistas */
+    /* ===== CHAT MINIMALISTA Y ELEGANTE ===== */
+    
+    /* Mensajes del chat - estilo limpio */
     div[data-testid="stChatMessage"] {
+        margin-bottom: 16px !important;
+        padding: 12px 0 !important;
         background: transparent !important;
         border: none !important;
-        border-radius: 0 !important;
-        margin-bottom: 16px !important;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
-        padding-bottom: 16px !important;
-        backdrop-filter: none !important;
-        transition: none !important;
     }
     
-    div[data-testid="stChatMessage"]:hover {
-        background: transparent !important;
-        border-color: rgba(255, 255, 255, 0.08) !important;
+    /* Texto del chat legible */
+    div[data-testid="stChatMessage"] .stMarkdown {
+        color: #e5e5e5 !important;
+        line-height: 1.6 !important;
     }
     
-    /* Avatar de usuario */
+    /* Avatares sutiles */
+    div[data-testid="stChatMessage"] img {
+        width: 28px !important;
+        height: 28px !important;
+        border-radius: 50% !important;
+        opacity: 0.9 !important;
+    }
+    
+    /* Avatares estilo WhatsApp */
     div[data-testid="stChatMessage"] img[alt="👤"] {
         border-radius: 50% !important;
-        box-shadow: 0 2px 8px rgba(74, 158, 255, 0.3) !important;
+        box-shadow: 0 2px 6px rgba(74, 158, 255, 0.4) !important;
+        width: 32px !important;
+        height: 32px !important;
     }
     
-    /* Avatar de asistente */
     div[data-testid="stChatMessage"] img[alt="🤖"] {
         border-radius: 50% !important;
-        box-shadow: 0 2px 8px rgba(0, 208, 132, 0.3) !important;
+        box-shadow: 0 2px 6px rgba(0, 208, 132, 0.4) !important;
+        width: 32px !important;
+        height: 32px !important;
     }
     
-    /* Container de chat minimalista */
+    /* Container de chat optimizado - sin padding desperdiciado */
     div[data-testid="stVerticalBlock"] div[data-testid="stVerticalBlock"] {
         background: transparent !important;
         border: none !important;
         border-radius: 0 !important;
         backdrop-filter: none !important;
+        padding: 0 !important;
+        margin: 0 !important;
+    }
+    
+    /* Eliminar padding superior del área de chat */
+    div[data-testid="stVerticalBlock"]:has(div[data-testid="stChatMessage"]) {
+        padding-top: 8px !important;
+        padding-bottom: 8px !important;
+    }
+    
+    /* Optimizar el container principal del chat */
+    div[data-testid="stVerticalBlockBorder"] {
+        padding: 8px 12px !important;
+        margin: 0 !important;
     }
     
     /* Scrollbar para el chat */
@@ -1534,37 +1585,33 @@ st.markdown("""
 # Título principal con estilo - SOLO UNO, SIN DUPLICADOS
 st.markdown('<h1 class="main-title">🤖 Agente Atlassian</h1>', unsafe_allow_html=True)
 
-# Container para mensajes con diseño moderno
-chat_height = 650
+# Container para mensajes optimizado - sin padding desperdiciado
+chat_height = 700
 chat_container = st.container(height=chat_height, border=False)
+# 🔄 RENDERIZADO CORRECTO: Mensajes del historial (según docs oficiales de Streamlit)
 with chat_container:
+    # Placeholder minimalista y compacto
     if not st.session_state.chat_history:
-        # Placeholder elegante cuando no hay mensajes
         st.markdown("""
-        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; text-align: center; padding: 2rem;">
-            <div style="font-size: 4rem; margin-bottom: 1rem; opacity: 0.7;">🤖</div>
-            <h3 style="color: #b3b3b3; font-weight: 500; margin-bottom: 0.5rem;">¡Hola! Soy tu Agente Atlassian</h3>
-            <p style="color: #808080; font-size: 14px; max-width: 400px; line-height: 1.5;">
-                Puedo ayudarte con Jira, Confluence y cualquier consulta que necesites. 
-                ¡Escribe tu pregunta abajo para comenzar!
+        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 200px; text-align: center; padding-top: 40px;">
+            <div style="font-size: 2.5rem; margin-bottom: 0.8rem; opacity: 0.6;">🤖</div>
+            <h3 style="color: #e5e5e5; font-weight: 400; margin-bottom: 0.3rem; font-size: 1.3rem;">Agente Atlassian</h3>
+            <p style="color: #9ca3af; font-size: 14px; max-width: 300px; line-height: 1.4;">
+                ¿En qué puedo ayudarte hoy?
             </p>
-            <div style="margin-top: 1.5rem; padding: 1rem; background: rgba(74, 158, 255, 0.1); border: 1px solid rgba(74, 158, 255, 0.3); border-radius: 8px; max-width: 500px;">
-                <p style="color: #4a9eff; font-size: 12px; margin: 0;">
-                    💡 <strong>Consejo:</strong> Para consultas de Atlassian, asegúrate de configurar tus credenciales en la barra lateral.
-                </p>
-            </div>
         </div>
         """, unsafe_allow_html=True)
-    else:
-        for message in st.session_state.chat_history:
-            if message["role"] == "user":
-                with st.chat_message("user", avatar="👤"):
-                    st.markdown(message["content"])
-            elif message["role"] == "assistant":
-                with st.chat_message("assistant", avatar="🤖"):
-                    st.markdown(message["content"])
+    
+    # ✅ RENDERIZADO CORRECTO: Historial con avatares específicos
+    for message in st.session_state.chat_history:
+        if message["role"] == "user":
+            with st.chat_message("user", avatar="👤"):
+                st.markdown(message["content"])
+        elif message["role"] == "assistant":
+            with st.chat_message("assistant", avatar="🤖"):
+                st.markdown(message["content"])
 
-# Chat input siempre visible en la parte inferior
+# 💬 MANEJO DEL INPUT - PATRÓN OFICIAL DE STREAMLIT
 if prompt := st.chat_input("💬 Escribe tu consulta aquí...", key="main_chat"):
     # Log de la acción del usuario
     log_user_action("user_query_submitted", 
@@ -1572,8 +1619,10 @@ if prompt := st.chat_input("💬 Escribe tu consulta aquí...", key="main_chat")
                    has_context=bool(generar_contexto_completo()),
                    query_preview=prompt[:100])  # Solo primeros 100 chars por privacidad
     
-    # Agregar mensaje del usuario al historial
+    # ✅ PASO 1: Agregar mensaje del usuario al historial INMEDIATAMENTE
     st.session_state.chat_history.append({"role": "user", "content": prompt})
+    
+    # ✅ NOTA: No renderizamos aquí porque ya se renderiza en el historial completo
     
     # --- VERIFICACIÓN DE CREDENCIALES ATLASSIAN ANTES DE LLAMAR AL AGENTE ---
     is_atlassian_related_query = any(kw in prompt.lower() for kw in ["atlassian", "jira", "confluence", "issue", "ticket", "página", "espacio"])
@@ -1584,6 +1633,9 @@ if prompt := st.chat_input("💬 Escribe tu consulta aquí...", key="main_chat")
                has_atlassian_credentials=bool(st.session_state.get("atlassian_api_key") and st.session_state.get("atlassian_username")),
                query_keywords=[kw for kw in ["atlassian", "jira", "confluence", "issue", "ticket", "página", "espacio"] if kw in prompt.lower()])
     
+    # 🔧 VERIFICACIÓN: El chat ya se renderiza arriba, aquí solo manejamos el procesamiento del agente
+    
+    # Verificar credenciales DESPUÉS del renderizado
     if is_atlassian_related_query and not (st.session_state.get("atlassian_api_key") and st.session_state.get("atlassian_username")):
         # Log de bloqueo por credenciales faltantes
         logger.warning("query_blocked_missing_credentials", 
@@ -1592,29 +1644,12 @@ if prompt := st.chat_input("💬 Escribe tu consulta aquí...", key="main_chat")
         log_user_action("credentials_required_warning", 
                        query_type="atlassian")
         
-        with chat_container:
-            for message in st.session_state.chat_history:
-                if message["role"] == "user":
-                    with st.chat_message("user", avatar="👤"):
-                        st.markdown(message["content"])
-                # No debería haber mensajes de assistant aquí aún si el historial se maneja correctamente
-            with st.chat_message("assistant", avatar="🤖"):
-                st.warning("⚠️ Para consultas sobre Atlassian (Jira/Confluence), por favor configura tu API Key Y tu Nombre de Usuario de Atlassian en la barra lateral.")
-                st.stop()
-
-    # Mostrar inmediatamente la pregunta del usuario en el chat
-    with chat_container:
-        for message in st.session_state.chat_history:
-            if message["role"] == "user":
-                with st.chat_message("user", avatar="👤"):
-                    st.markdown(message["content"])
-            elif message["role"] == "assistant":
-                with st.chat_message("assistant", avatar="🤖"):
-                    st.markdown(message["content"])
-        
-        # Mostrar el estado del agente dentro del chat
-        with st.chat_message("assistant", avatar="🤖"):
-            status_placeholder = st.empty()
+        # Agregar mensaje de error al historial y detener
+        st.session_state.chat_history.append({"role": "assistant", "content": "⚠️ Para consultas sobre Atlassian (Jira/Confluence), por favor configura tu API Key Y tu Nombre de Usuario de Atlassian en la barra lateral."})
+        st.rerun()
+    
+    # ✅ PASO 3: Crear contenedor temporal para mostrar status del agente
+    status_placeholder = st.empty()
     
     # Generar contexto completo (usuario + memoria)
     contexto_completo = generar_contexto_completo()
@@ -1637,30 +1672,40 @@ if prompt := st.chat_input("💬 Escribe tu consulta aquí...", key="main_chat")
                    agent_type="pydantic_ai",
                    framework="streamlit")
         
-        # Paso 1: Iniciar
-        start_agent_process("Procesando tu consulta...")
-        with status_placeholder:
-            render_current_status(status_display)
-        
-        # Paso 2: Construir contexto
-        track_context_building()
-        with status_placeholder:
-            render_current_status(status_display)
+        # Mostrar animación elegante de "pensando"
+        status_placeholder.markdown("""
+        <div style="display: flex; align-items: center; gap: 8px; padding: 12px; color: #4a9eff;">
+            <div class="thinking-dots">
+                <span></span><span></span><span></span>
+            </div>
+            <span style="font-size: 14px;">El agente está procesando tu consulta...</span>
+        </div>
+        <style>
+        .thinking-dots {
+            display: flex;
+            gap: 4px;
+        }
+        .thinking-dots span {
+            width: 6px;
+            height: 6px;
+            background: #4a9eff;
+            border-radius: 50%;
+            animation: bounce 1.4s infinite ease-in-out both;
+        }
+        .thinking-dots span:nth-child(1) { animation-delay: -0.32s; }
+        .thinking-dots span:nth-child(2) { animation-delay: -0.16s; }
+        @keyframes bounce {
+            0%, 80%, 100% { transform: scale(0); }
+            40% { transform: scale(1); }
+        }
+        </style>
+        """, unsafe_allow_html=True)
         
         with logfire.span("agent_interaction_streamlit", 
                          user_prompt=prompt, 
                          framework="streamlit",
                          operation_id=operation_id,
                          has_context=bool(contexto_completo)):
-            # Paso 3: Analizar consulta
-            track_llm_thinking()
-            with status_placeholder:
-                render_current_status(status_display)
-            
-            # Paso 4: Generar respuesta
-            track_response_generation()
-            with status_placeholder:
-                render_current_status(status_display)
             
             # Ejecutar el agente
             logger.info("agent_execution_starting", 
@@ -1682,7 +1727,7 @@ if prompt := st.chat_input("💬 Escribe tu consulta aquí...", key="main_chat")
         # Calcular duración total
         agent_duration_ms = (time.time() - agent_start_time) * 1000
         
-        # Reemplazar el estado con la respuesta final
+        # ✅ PASO 4: Mostrar respuesta final y guardar en historial
         if result.output:
             # Log de respuesta exitosa
             logger.info("agent_response_generated", 
@@ -1697,8 +1742,10 @@ if prompt := st.chat_input("💬 Escribe tu consulta aquí...", key="main_chat")
                            duration_ms=round(agent_duration_ms, 2),
                            success=True)
             
-            with status_placeholder:
-                st.markdown(result.output)
+            # Limpiar status de "pensando"
+            status_placeholder.empty()
+            
+            # Agregar al historial para persistencia (se mostrará en próximo rerun)
             st.session_state.chat_history.append({"role": "assistant", "content": result.output})
         else:
             # Log de respuesta vacía
@@ -1714,8 +1761,11 @@ if prompt := st.chat_input("💬 Escribe tu consulta aquí...", key="main_chat")
                            issue="empty_response")
             
             error_msg = "⚠️ El agente no produjo una respuesta. Intenta reformular tu pregunta."
-            with status_placeholder:
-                st.markdown(error_msg)
+            
+            # Limpiar status de "pensando"
+            status_placeholder.empty()
+            
+            # Agregar al historial para persistencia (se mostrará en próximo rerun)
             st.session_state.chat_history.append({"role": "assistant", "content": error_msg})
             
     except Exception as e:
@@ -1737,10 +1787,14 @@ if prompt := st.chat_input("💬 Escribe tu consulta aquí...", key="main_chat")
                        issue="processing_error")
         
         error_message = f"❌ **Error:** {str(e)}\n\n💡 **Sugerencias:**\n- Verifica que el modelo esté funcionando correctamente\n- Intenta simplificar tu consulta\n- Revisa la configuración del contexto de memoria"
-        with status_placeholder:
-            st.markdown(error_message)
+        
+        # Limpiar status de "pensando"
+        status_placeholder.empty()
+        
+        # Agregar al historial para persistencia (se mostrará en próximo rerun)
         st.session_state.chat_history.append({"role": "assistant", "content": error_message})
     
+    # ✅ FORZAR ACTUALIZACIÓN LIMPIA DEL DOM para evitar conflictos CSS temporales
     st.rerun()
 
 # --- SIDEBAR ---
@@ -2054,14 +2108,18 @@ with st.sidebar:
                 st.markdown("**Alias guardados:**")
                 for alias, value in memoria_usuario.items():
                     st.markdown(f"• **{alias}** → `{value}`")
-                
-                if st.button("🔄 Recargar memoria", use_container_width=True):
-                    if "memoria_usuario" in st.session_state:
-                        del st.session_state["memoria_usuario"]
-                    st.rerun()
             else:
                 st.info("No hay alias guardados")
                 st.markdown("Los alias se crean automáticamente cuando el agente guarda información")
+            
+            # 🔄 MEJORA: Botón de recargar SIEMPRE visible
+            st.markdown("---")
+            if st.button("🔄 Recargar memoria", use_container_width=True, 
+                        help="Sincroniza los alias desde el servidor"):
+                if "memoria_usuario" in st.session_state:
+                    del st.session_state["memoria_usuario"]
+                precargar_memoria_usuario()  # Recargar
+                st.rerun()
 
     with col2:
         if st.button("🗑️", key="clear_chat", help="Limpiar historial de chat"):

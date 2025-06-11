@@ -46,15 +46,77 @@ class AgentStatusDisplay:
 status_display = AgentStatusDisplay()
 
 def render_current_status(display: AgentStatusDisplay):
-    """Renderiza solo el estado actual del agente en una línea simple."""
+    """Renderiza el estado actual del agente con animación."""
     current = display.get_current_status()
     
     if not current:
         return None
     
-    # Mostrar solo una línea simple con el estado actual
+    # 🔄 MEJORA: Indicador animado style WhatsApp
     if current.is_running:
-        st.markdown(f"🔄 {current.icon} {current.details}")
+        # Construir el HTML sin f-strings complicados
+        icon = current.icon
+        details = current.details
+        
+        html_content = f"""
+        <div style="
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            background: rgba(74, 158, 255, 0.1);
+            border-radius: 12px;
+            border-left: 3px solid #4a9eff;
+            color: #e5e5e5;
+            font-size: 14px;
+            margin: 8px 0;
+        ">
+            <div class="thinking-animation">{icon}</div>
+            <span>{details}</span>
+            <div class="dots-animation">
+                <span class="dot">.</span>
+                <span class="dot">.</span>
+                <span class="dot">.</span>
+            </div>
+        </div>
+        """
+        
+        css_styles = """
+        <style>
+        @keyframes thinking {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+        }
+        
+        @keyframes dots {
+            0%, 20% { opacity: 0; }
+            50% { opacity: 1; }
+            100% { opacity: 0; }
+        }
+        
+        .thinking-animation {
+            animation: thinking 1.5s ease-in-out infinite;
+        }
+        
+        .dots-animation {
+            display: flex;
+            gap: 2px;
+        }
+        
+        .dot {
+            font-size: 16px;
+            font-weight: bold;
+            color: #4a9eff;
+            animation: dots 1.5s infinite;
+        }
+        
+        .dot:nth-child(1) { animation-delay: 0s; }
+        .dot:nth-child(2) { animation-delay: 0.5s; }
+        .dot:nth-child(3) { animation-delay: 1s; }
+        </style>
+        """
+        
+        st.markdown(html_content + css_styles, unsafe_allow_html=True)
     else:
         st.markdown(f"✅ {current.icon} {current.details}")
 
