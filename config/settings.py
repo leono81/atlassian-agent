@@ -15,6 +15,7 @@ CONFLUENCE_API_TOKEN = os.getenv("CONFLUENCE_API_TOKEN")
 
 # Logfire Configuration
 LOGFIRE_TOKEN = os.getenv("LOGFIRE_TOKEN")
+LOGFIRE_IGNORE_NO_CONFIG = os.getenv("LOGFIRE_IGNORE_NO_CONFIG", "1")
 
 # PydanticAI Model (opcional, puedes definirlo directamente en el agente)
 PYDANTIC_AI_MODEL = os.getenv("PYDANTIC_AI_MODEL", "openai:gpt-4.1-mini") # Default model

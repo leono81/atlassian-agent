@@ -23,6 +23,10 @@ import json
 from pathlib import Path
 import time
 import uuid
+import os
+
+# Configurar variable de entorno para evitar warnings de Logfire
+os.environ.setdefault("LOGFIRE_IGNORE_NO_CONFIG", "1")
 
 # Configurar Logfire SOLO si no está ya configurado
 def _configure_logfire_if_needed():
@@ -36,7 +40,8 @@ def _configure_logfire_if_needed():
                 token=settings.LOGFIRE_TOKEN,
                 send_to_logfire="if-token-present",
                 service_name="jira_confluence_agent_ui", 
-                service_version="0.1.0"
+                service_version="0.1.0",
+                ignore_no_config=True  # Evitar warnings cuando no está configurado
             )
             # Instrumentación automática avanzada de Logfire
             logfire.instrument_pydantic_ai()
@@ -47,11 +52,18 @@ def _configure_logfire_if_needed():
             log_system_event('application_started', 
                            component='streamlit_ui',
                            version='0.1.0')
+        else:
+            # Si no hay token, configurar en modo silencioso
+            logfire.configure(ignore_no_config=True)
+            setattr(logfire, '_configured', True)
     except Exception as e:
         # Si hay error configurando logfire, continuar sin él
-        log_system_event('logfire_configuration_failed', 
-                        severity='warning',
-                        error=str(e))
+        print(f"Warning: Error configurando Logfire: {e}")
+        try:
+            logfire.configure(ignore_no_config=True)
+            setattr(logfire, '_configured', True)
+        except:
+            pass
 
 _configure_logfire_if_needed()
 
@@ -1667,17 +1679,29 @@ if prompt := st.chat_input("💬 Escribe tu consulta aquí...", key="main_chat")
                        operation_id=operation_id,
                        execution_method="asyncio")
             
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            
-            result = loop.run_until_complete(simple_agent.run(
-                prompt_con_contexto,
-                message_history=st.session_state.pydantic_ai_messages
-            ))
-            loop.close()
-            
-            # Actualizar historial con los nuevos mensajes del agente
-            st.session_state.pydantic_ai_messages.extend(result.new_messages())
+            loop = None
+            try:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                
+                result = loop.run_until_complete(simple_agent.run(
+                    prompt_con_contexto,
+                    message_history=st.session_state.pydantic_ai_messages
+                ))
+                
+                # Actualizar historial con los nuevos mensajes del agente
+                if result and hasattr(result, 'new_messages'):
+                    st.session_state.pydantic_ai_messages.extend(result.new_messages())
+                
+            except Exception as agent_error:
+                logger.error("agent_execution_failed", 
+                           operation_id=operation_id,
+                           error=str(agent_error),
+                           error_type=type(agent_error).__name__)
+                raise agent_error
+            finally:
+                if loop:
+                    loop.close()
         
         # Calcular duración total
         agent_duration_ms = (time.time() - agent_start_time) * 1000

@@ -387,8 +387,8 @@ async def precargar_memoria_completa_usuario(limit: int = 100) -> SearchMemoryRe
         # Usar get_all() para obtener todas las memorias del usuario
         # Esto es mucho más eficiente que hacer búsquedas semánticas genéricas
         result = mem0_client.get_all(user_id=current_user_id, limit=limit)
-        logfire.info(f"precargar_memoria_completa_usuario - get_all result type: {type(result)}")
-        logfire.info(f"precargar_memoria_completa_usuario - get_all result content: {result}")
+        logfire.info("precargar_memoria_completa_usuario - get_all result", result_type=str(type(result)))
+        logfire.info("precargar_memoria_completa_usuario - get_all result content", result=str(result))
         
         parsed_results_list = []
         
@@ -413,10 +413,10 @@ async def precargar_memoria_completa_usuario(limit: int = 100) -> SearchMemoryRe
         logfire.info(f"Procesando {len(actual_mem_list)} memorias")
 
         for i, mem_item in enumerate(actual_mem_list):
-            logfire.debug(f"Procesando memoria {i+1}: {mem_item}")
+            logfire.debug("Procesando memoria", memory_index=i+1, memory_item=str(mem_item))
             
             if not isinstance(mem_item, dict): 
-                logfire.debug(f"Memoria {i+1} no es dict, tipo: {type(mem_item)}")
+                logfire.debug("Memoria no es dict", memory_index=i+1, memory_type=str(type(mem_item)))
                 continue
                 
             # Obtener metadata - puede estar en diferentes lugares según la versión de la API
@@ -424,7 +424,7 @@ async def precargar_memoria_completa_usuario(limit: int = 100) -> SearchMemoryRe
             if not isinstance(meta, dict): 
                 meta = {}
             
-            logfire.debug(f"Memoria {i+1} metadata: {meta}")
+            logfire.debug("Memoria metadata", memory_index=i+1, metadata=str(meta))
             
             # Buscar alias y value en metadata
             alias_val = meta.get("alias")
