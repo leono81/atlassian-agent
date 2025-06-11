@@ -296,3 +296,89 @@ Este proyecto está bajo la Licencia MIT. Ver el archivo `LICENSE` para más det
 ---
 
 **Desarrollado con ❤️ usando PydanticAI, Streamlit y las mejores prácticas de desarrollo de agentes conversacionales.**
+
+## 🚀 Inicio Rápido
+
+### Ejecutar la aplicación
+
+### Opciones para ejecutar la aplicación:
+
+```bash
+# ✅ OPCIÓN 1 - Ejecutar directamente (Recomendado)
+streamlit run ui/app.py
+
+# ✅ OPCIÓN 2 - Usar el wrapper (Para Streamlit Cloud)
+streamlit run streamlit_app.py
+```
+
+**Ambas opciones funcionan correctamente** - `streamlit_app.py` ahora ejecuta `ui/app.py` automáticamente.
+
+### Configuración inicial
+
+1. **Instalar dependencias:**
+```bash
+pip install -r requirements.txt
+```
+
+2. **Crear usuario administrador:**
+```bash
+python create_admin_user.py
+```
+
+3. **Configurar variables de entorno:**
+   - Copia `.env.example` a `.env`
+   - Configura tus API keys de OpenAI/Anthropic
+   - Configura Mem0 para memoria persistente (opcional)
+
+4. **Ejecutar la aplicación:**
+```bash
+streamlit run ui/app.py
+```
+
+## 📁 Estructura de archivos importantes
+
+- `ui/app.py` - **Aplicación principal** (2163 líneas)
+- `streamlit_app.py` - Proxy para Streamlit Cloud (solo 11 líneas)
+- `agent_core/main_agent.py` - Configuración del agente PydanticAI
+- `tools/` - Herramientas para Jira, Confluence y Mem0
+- `config/` - Configuración, autenticación y base de datos
+
+## 🔧 Troubleshooting
+
+### Pantalla negra o interfaz vacía
+Si ves una pantalla negra al usar el chat, verifica que estés ejecutando:
+```bash
+streamlit run ui/app.py  # NO streamlit_app.py
+```
+
+### Problemas de importación
+Si hay errores de `No module named 'mem0'`:
+```bash
+pip install mem0ai
+```
+
+## 🌐 Acceso
+
+- **Local**: http://localhost:8501
+- **Red**: http://TU_IP:8501
+
+## 📝 Características
+
+- ✅ Autenticación local con usuarios y sesiones
+- ✅ Panel de administración
+- ✅ Integración completa con Jira y Confluence
+- ✅ Memoria persistente con Mem0
+- ✅ Logging avanzado con Logfire
+- ✅ Interfaz responsive y moderna
+- ✅ Manejo robusto de credenciales cifradas
+
+## 🔐 Seguridad
+
+- Credenciales cifradas en base de datos SQLite
+- Sesiones de usuario con expiración
+- Logging de auditoría completo
+- Validación de permisos por usuario
+
+---
+
+**¿Problemas?** Revisa que estés usando `streamlit run ui/app.py` y no `streamlit_app.py`.
