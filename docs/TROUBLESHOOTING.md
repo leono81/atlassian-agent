@@ -1,4 +1,4 @@
-# 🛠️ Guía de Troubleshooting - Sistema de Autenticación Híbrido
+# 🛠️ Guía de Troubleshooting - Agente Conversacional Atlassian
 
 ## 🚨 Diagnóstico Rápido
 
@@ -198,6 +198,201 @@ print('Password reseteado:', result)
 ```bash
 # Para cuando no tienes acceso a ningún admin
 python3 -c "
+from config.user_credentials_db import user_credentials_db
+result = user_credentials_db.create_local_user(
+    'admin@empresa.com',
+    'Admin Emergency',
+    'Admin123!',
+    True  # es admin
+)
+print('Admin de emergencia creado:', result)
+"
+```
+
+## 🌍 Problemas de Fecha y Zona Horaria
+
+### ❌ Error: "No se pudo interpretar la fecha"
+
+#### **Síntoma**: Error al registrar worklogs con mensaje de fecha inválida
+
+**Diagnóstico:**
+```bash
+# Verificar configuración de timezone
+python3 -c "
+import os
+from config.settings import get_timezone, parse_datetime_robust
+print('TIMEZONE env:', os.getenv('TIMEZONE'))
+print('Timezone configurado:', get_timezone())
+
+# Probar parsing de fechas
+test_dates = [
+    '2025-06-12T12:00:00-03:00',
+    '2025-06-12T00:00:00.000+0000',
+    '2024-07-30T14:30:00Z',
+    'ahora'
+]
+for date_str in test_dates:
+    try:
+        parsed = parse_datetime_robust(date_str)
+        print(f'✅ {date_str} -> {parsed}')
+    except Exception as e:
+        print(f'❌ {date_str} -> ERROR: {e}')
+"
+```
+
+**Soluciones:**
+
+**🔧 Variable TIMEZONE no configurada:**
+```bash
+# Agregar al archivo .env
+echo "TIMEZONE=America/Buenos_Aires" >> .env
+
+# O configurar temporalmente
+export TIMEZONE=America/Buenos_Aires
+
+# Reiniciar aplicación
+./start_atlassian_agent.sh restart
+```
+
+**🔧 Timezone inválida:**
+```bash
+# Verificar timezones disponibles
+python3 -c "
+import zoneinfo
+print('Algunas zonas horarias válidas:')
+for tz in ['America/Buenos_Aires', 'America/New_York', 'Europe/Madrid', 'UTC']:
+    try:
+        zone = zoneinfo.ZoneInfo(tz)
+        print(f'✅ {tz}')
+    except:
+        print(f'❌ {tz}')
+"
+
+# Configurar zona horaria correcta en .env
+nano .env
+# TIMEZONE=America/Buenos_Aires  # Cambiar por tu zona
+```
+
+**🔧 Diferencias entre entornos:**
+```bash
+# Verificar diferencias local vs servidor
+echo "=== ENTORNO LOCAL ==="
+python3 -c "
+from datetime import datetime
+import os
+print('TZ env:', os.getenv('TZ'))
+print('TIMEZONE env:', os.getenv('TIMEZONE'))
+print('Datetime now:', datetime.now())
+print('Sistema timezone:', datetime.now().astimezone().tzinfo)
+"
+
+echo "=== CONFIGURACIÓN DEL AGENTE ==="
+python3 -c "
+from config.settings import get_timezone, parse_datetime_robust, format_datetime_for_jira
+from datetime import datetime
+print('Agente timezone:', get_timezone())
+now = datetime.now(get_timezone())
+print('Fecha actual agente:', now)
+print('Formato Jira:', format_datetime_for_jira(now))
+"
+```
+
+### ❌ Worklog con Hora Incorrecta
+
+#### **Síntoma**: Los worklogs se registran con horarios diferentes a los esperados
+
+**Diagnóstico:**
+```bash
+# Test completo de worklog de fechas
+python3 -c "
+from config.settings import parse_datetime_robust, format_datetime_for_jira
+from datetime import datetime
+
+print('=== TEST DE FECHAS PARA WORKLOG ===')
+test_cases = [
+    ('ahora', 'Fecha actual'),
+    ('2025-06-12T15:30:00', 'Sin timezone (debería usar local)'),
+    ('2025-06-12T15:30:00-03:00', 'Con timezone Argentina'),
+    ('2025-06-12T18:30:00+00:00', 'UTC (debería convertir)'),
+    ('2025-06-12T18:30:00.000+0000', 'Formato servidor problemático')
+]
+
+for date_input, description in test_cases:
+    try:
+        parsed = parse_datetime_robust(date_input)
+        jira_format = format_datetime_for_jira(parsed)
+        print(f'{description}:')
+        print(f'  Input: {date_input}')
+        print(f'  Parsed: {parsed}')
+        print(f'  Jira: {jira_format}')
+        print()
+    except Exception as e:
+        print(f'❌ ERROR con {description}: {e}')
+"
+```
+
+**Soluciones:**
+
+**🔧 Sincronizar timezone del sistema:**
+```bash
+# En sistemas Linux
+sudo timedatectl set-timezone America/Buenos_Aires
+
+# Verificar
+timedatectl status
+
+# Reiniciar aplicación
+./start_atlassian_agent.sh restart
+```
+
+**🔧 Forzar timezone en la aplicación:**
+```bash
+# Agregar variables de entorno específicas
+echo "TZ=America/Buenos_Aires" >> .env
+echo "TIMEZONE=America/Buenos_Aires" >> .env
+
+# Reiniciar con variables
+source .env && ./start_atlassian_agent.sh restart
+```
+
+### 💡 Test Completo de Fechas
+
+```bash
+# Script completo para verificar manejo de fechas
+python3 -c "
+print('🧪 TEST COMPLETO DE MANEJO DE FECHAS')
+print('=' * 50)
+
+# 1. Configuración
+import os
+from config.settings import get_timezone, parse_datetime_robust, format_datetime_for_jira
+from datetime import datetime
+
+print('1. CONFIGURACIÓN:')
+print(f'   TIMEZONE env: {os.getenv(\"TIMEZONE\")}')
+print(f'   Timezone activo: {get_timezone()}')
+print()
+
+# 2. Test de casos problemáticos
+print('2. CASOS PROBLEMÁTICOS:')
+casos_servidor = [
+    '2025-06-12T00:00:00.000+0000',  # Formato servidor
+    '2025-06-12T12:00:00-03:00',     # Formato local
+    '2024-07-30T14:30:00Z'           # UTC con Z
+]
+
+for caso in casos_servidor:
+    try:
+        parsed = parse_datetime_robust(caso)
+        jira_fmt = format_datetime_for_jira(parsed)
+        print(f'   ✅ {caso} -> {jira_fmt}')
+    except Exception as e:
+        print(f'   ❌ {caso} -> ERROR: {e}')
+
+print()
+print('3. Si todos los casos muestran ✅, el problema está resuelto.')
+print('4. Si hay ❌, revisar configuración de TIMEZONE en .env')
+"
 from config.user_credentials_db import user_credentials_db
 import uuid
 emergency_password = 'Emergency' + str(uuid.uuid4())[:8]
