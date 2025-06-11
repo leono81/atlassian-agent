@@ -514,21 +514,21 @@ async def add_worklog_to_jira_issue(
         if time_spent_seconds_int <= 0:
             raise ValueError("El tiempo trabajado (time_spent) debe ser mayor que cero segundos para Jira.")
 
-        # --- Manejo robusto de fechas ---
-        # Si started_datetime_str es una fecha relativa (no ISO ni 'ahora'), usar parse_relative_date
-        if not started_datetime_str_cleaned or (isinstance(started_datetime_str_cleaned, str) and started_datetime_str_cleaned.lower() == 'ahora'):
+        # --- Manejo robusto de fechas usando configuración del sistema ---
+        from config.settings import parse_datetime_robust, format_datetime_for_jira
+        
+        try:
+            _started_dt_object = parse_datetime_robust(started_datetime_str_cleaned, fallback_to_now=True)
+            started_str = format_datetime_for_jira(_started_dt_object)
+            
+            logfire.info("Fecha procesada exitosamente: input='{input}' -> parsed='{parsed}' -> jira_format='{jira_format}'",
+                        input=started_datetime_str_cleaned, parsed=_started_dt_object, jira_format=started_str)
+        except Exception as e:
+            # Fallback final en caso de error crítico
             _started_dt_object = datetime.now(timezone.utc).astimezone()
-        else:
-            try:
-                _started_dt_object = datetime.fromisoformat(started_datetime_str_cleaned.replace("Z", "+00:00"))
-                if _started_dt_object.tzinfo is None:
-                    _started_dt_object = _started_dt_object.replace(tzinfo=timezone.utc).astimezone()
-            except ValueError:
-                # Usar fecha actual si no se puede interpretar (date_utils comentado temporalmente)
-                _started_dt_object = datetime.now(timezone.utc).astimezone()
-                logfire.warning("No se pudo interpretar la fecha '{date_str}', usando fecha actual", date_str=started_datetime_str_cleaned)
-        # Formatear como string para Jira
-        started_str = _started_dt_object.strftime("%Y-%m-%dT%H:%M:%S.000%z")
+            started_str = _started_dt_object.strftime("%Y-%m-%dT%H:%M:%S.000%z")
+            logfire.error("Error crítico al procesar fecha '{date_str}', usando fecha actual. Error: {error}",
+                         date_str=started_datetime_str_cleaned, error=str(e))
         # Llamada correcta: argumentos posicionales
         with logfire.span("jira.add_worklog_final_call", issue_key=issue_key, started=started_str, time_spent_seconds=time_spent_seconds_int):
             call_func = functools.partial(
