@@ -1566,14 +1566,23 @@ with chat_container:
 
 # Chat input siempre visible en la parte inferior
 if prompt := st.chat_input("💬 Escribe tu consulta aquí...", key="main_chat"):
-    # Log de la acción del usuario
-    log_user_action("user_query_submitted", 
-                   query_length=len(prompt),
-                   has_context=bool(generar_contexto_completo()),
-                   query_preview=prompt[:100])  # Solo primeros 100 chars por privacidad
+    # Log de diagnóstico inmediato
+    print(f"🔍 DIAGNÓSTICO: Chat input recibido: '{prompt[:50]}...'")
+    
+    try:
+        # Log de la acción del usuario
+        log_user_action("user_query_submitted", 
+                       query_length=len(prompt),
+                       has_context=bool(generar_contexto_completo()),
+                       query_preview=prompt[:100])  # Solo primeros 100 chars por privacidad
+        print("✅ DIAGNÓSTICO: Log de usuario enviado correctamente")
+    except Exception as e:
+        print(f"❌ DIAGNÓSTICO: Error en log de usuario: {e}")
+        # Continuar sin el log si falla
     
     # Agregar mensaje del usuario al historial
     st.session_state.chat_history.append({"role": "user", "content": prompt})
+    print("✅ DIAGNÓSTICO: Mensaje agregado al historial")
     
     # --- VERIFICACIÓN DE CREDENCIALES ATLASSIAN ANTES DE LLAMAR AL AGENTE ---
     is_atlassian_related_query = any(kw in prompt.lower() for kw in ["atlassian", "jira", "confluence", "issue", "ticket", "página", "espacio"])
@@ -1617,8 +1626,10 @@ if prompt := st.chat_input("💬 Escribe tu consulta aquí...", key="main_chat")
             status_placeholder = st.empty()
     
     # Generar contexto completo (usuario + memoria)
+    print("🔍 DIAGNÓSTICO: Generando contexto...")
     contexto_completo = generar_contexto_completo()
     prompt_con_contexto = f"{contexto_completo}\n\n{prompt}" if contexto_completo else prompt
+    print("✅ DIAGNÓSTICO: Contexto generado")
     
     # Log del contexto generado
     logger.info("context_preparation", 
@@ -1741,7 +1752,8 @@ if prompt := st.chat_input("💬 Escribe tu consulta aquí...", key="main_chat")
             st.markdown(error_message)
         st.session_state.chat_history.append({"role": "assistant", "content": error_message})
     
-    st.rerun()
+    print("🔍 DIAGNÓSTICO: Procesamiento del chat completado")
+    # st.rerun()  # TEMPORALMENTE COMENTADO PARA DIAGNÓSTICO
 
 # --- SIDEBAR ---
 # ========== DISEÑO UX/UI PROFESIONAL CON MÉTODOS ROBUSTOS ==========
